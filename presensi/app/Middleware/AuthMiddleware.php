@@ -22,6 +22,12 @@ final class AuthMiddleware
             }
             return Response::redirect(route('login'));
         }
+        // Kirim ulang notifikasi yang tertunda/gagal (retry) setelah halaman admin terkirim.
+        if (\App\Services\Notifier::enabled()) {
+            \App\Core\App::terminating(static function () {
+                \App\Services\Notifier::process([], 3);
+            });
+        }
         return $next($request);
     }
 }

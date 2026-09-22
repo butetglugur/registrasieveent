@@ -10,6 +10,7 @@ $__nav = [
     ['Sistem', null, null, null, true],
     ['Pengguna', 'admin.users', 'shield', '/admin/pengguna', true],
     ['Pengaturan', 'admin.settings', 'settings', '/admin/pengaturan', true],
+    ['Notifikasi', 'admin.notifications', 'mail', '/admin/notifikasi', true],
     ['Log Aktivitas', 'admin.activity', 'activity', '/admin/aktivitas', true],
 ];
 $__initials = static function (string $n): string {

@@ -116,6 +116,7 @@ final class InstallController extends Controller
             }
 
             Setting::flush();
+            Setting::set('schema_version', (string) \App\Core\Migrator::VERSION);
             if (Setting::get('app_name', '') === '' || $request->str('app_name') !== '') {
                 Setting::set('app_name', $input['app_name']);
             }

@@ -101,3 +101,25 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   KEY activity_logs_created_index (created_at),
   KEY activity_logs_user_index (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- v2.1: antrean & riwayat notifikasi ke peserta (WhatsApp / email / webhook)
+CREATE TABLE IF NOT EXISTS notifications (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  registration_id INT UNSIGNED NULL,
+  channel VARCHAR(20) NOT NULL,
+  provider VARCHAR(20) NOT NULL,
+  recipient VARCHAR(190) NOT NULL,
+  subject VARCHAR(200) NULL,
+  message TEXT NOT NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'pending',
+  attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  last_error VARCHAR(255) NULL,
+  next_attempt_at DATETIME NULL,
+  sent_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY notifications_queue_index (status, next_attempt_at),
+  KEY notifications_registration_index (registration_id),
+  KEY notifications_created_index (created_at),
+  CONSTRAINT notifications_registration_fk FOREIGN KEY (registration_id) REFERENCES registrations (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

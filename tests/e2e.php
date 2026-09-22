@@ -478,6 +478,158 @@ $web->get('/');
 T::contains('Presensi Keren', $web->body, 'nama aplikasi baru tampil');
 
 // =====================================================================
+T::group('Notifikasi peserta (WA gateway, email SMTP, webhook)');
+$MOCK = getenv('MOCK_API') ?: 'http://127.0.0.1:8099';
+$mockLog = getenv('MOCK_LOG') ?: sys_get_temp_dir() . '/presensi-mock-api.jsonl';
+$smtpLog = getenv('MOCK_SMTP_LOG') ?: sys_get_temp_dir() . '/presensi-mock-smtp.log';
+@unlink($mockLog);
+@unlink($smtpLog);
+$readJsonl = static function (string $f): array {
+    $out = [];
+    foreach (is_file($f) ? file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [] as $l) { $out[] = json_decode($l, true); }
+    return $out;
+};
+// Tulis config/env.php lalu tunggu revalidasi OPcache server (revalidate_freq default 2 detik)
+$writeEnv = static function (array $env) use ($APP): void {
+    file_put_contents($APP . '/config/env.php', "<?php\nreturn " . var_export($env, true) . ";\n");
+    touch($APP . '/config/env.php', time() + 1);
+    sleep(3);
+};
+// Arahkan endpoint Fonnte ke server tiruan (config/env.php, seperti override di produksi)
+$envArr = require $APP . '/config/env.php';
+$envArr['NOTIFY_FONNTE_URL'] = $MOCK . '/send';
+$writeEnv($envArr);
+
+// Simulasi upgrade dari v2.0 (tabel notifications belum ada) -> migrasi otomatis
+$pdo->exec('DROP TABLE notifications');
+$pdo->exec("DELETE FROM app_settings WHERE `key` = 'schema_version'");
+$anon = new Http($BASE);
+$anon->get('/');
+T::eq(200, $anon->status, 'situs tetap jalan saat upgrade');
+T::eq(1, (int) $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'notifications'")->fetchColumn(), 'tabel notifications dibuat otomatis (migrasi)');
+T::eq('2', (string) $pdo->query("SELECT value FROM app_settings WHERE `key`='schema_version'")->fetchColumn(), 'versi skema tercatat');
+$anon->get('/admin/notifikasi');
+T::eq(302, $anon->status, 'halaman notifikasi butuh login');
+$admin->get('/admin/notifikasi');
+T::eq(200, $admin->status, 'halaman notifikasi tampil untuk admin');
+T::contains('integrasi sistem eksternal', $admin->body, 'peringatan pengiriman data ke pihak ketiga tampil');
+T::contains('Notifikasi', $admin->body, 'menu notifikasi ada di sidebar');
+T::eq(0, (int) $pdo->query('SELECT COUNT(*) FROM notifications')->fetchColumn(), 'default: tidak ada notifikasi (fitur nonaktif)');
+
+$notif = [
+    'notify_enabled' => '1', 'notify_wa_provider' => 'fonnte', 'notify_wablas_domain' => '', 'notify_wa_token' => '',
+    'notify_wa_template' => "Halo {nama}, tiket {event}: {kode}\n{link_tiket}\nGrup: {link_grup}",
+    'notify_email_enabled' => '1', 'notify_email_driver' => 'smtp', 'notify_smtp_host' => '127.0.0.1', 'notify_smtp_port' => '2525',
+    'notify_smtp_encryption' => 'none', 'notify_smtp_username' => 'mailer@test.id', 'notify_smtp_password' => 'SmtpPass!9',
+    'notify_mail_from' => 'noreply@test.id', 'notify_mail_from_name' => 'Panitia DMI', 'notify_email_subject' => 'Tiket {event}',
+    'notify_email_template' => "Halo {nama}\nKode: {kode}\n{link_tiket}",
+    'notify_webhook_enabled' => '1', 'notify_webhook_url' => 'http://example.com/hook', 'notify_webhook_secret' => 'whsec_123',
+];
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf()] + $notif);
+$admin->follow();
+T::contains('Token API WhatsApp wajib diisi', $admin->body, 'token WA wajib bila provider dipilih');
+T::contains('wajib memakai https://', $admin->body, 'webhook non-https ditolak');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_provider' => 'wablas', 'notify_wa_token' => 'x'] + $notif);
+$admin->follow();
+T::contains('Domain server Wablas wajib diisi', $admin->body, 'domain Wablas wajib');
+
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_token' => 'TOKEN-RAHASIA-123', 'notify_webhook_url' => $MOCK . '/hook'] + $notif);
+$admin->follow();
+T::contains('Pengaturan notifikasi disimpan', $admin->body, 'pengaturan notifikasi tersimpan');
+T::notContains('TOKEN-RAHASIA-123', $admin->body, 'token tidak ditampilkan ulang di halaman');
+T::notContains('SmtpPass!9', $admin->body, 'password SMTP tidak ditampilkan ulang');
+$stored = (string) $pdo->query("SELECT value FROM app_settings WHERE `key`='notify_wa_token'")->fetchColumn();
+T::ok(str_starts_with($stored, 'enc:v1:') && !str_contains($stored, 'TOKEN-RAHASIA'), 'token disimpan terenkripsi di database');
+T::contains('tersimpan (terenkripsi)', $admin->body, 'indikator rahasia tersimpan');
+
+// Event baru dengan kolom email
+$admin->get('/admin/event/baru');
+$admin->post('/admin/event', ['_token' => $admin->csrf(), 'title' => 'Webinar Notifikasi', 'slug' => '', 'status' => 'open', 'theme' => 'aurora',
+    'group_link' => 'https://chat.whatsapp.com/NOTIF', 'show_email' => '1', 'fields' => '[]', 'location' => 'Zoom', 'starts_at' => '2026-12-01T19:00', 'dedupe_wa' => '1']);
+T::eq(302, $admin->status, 'event notifikasi dibuat');
+$ng = new Http($BASE);
+$ng->get('/e/webinar-notifikasi');
+$nts = $ng->field('ts');
+sleep(2);
+$ng->post('/e/webinar-notifikasi', ['_token' => $ng->csrf(), 'ts' => $nts, 'name' => 'Rina Notif', 'wa' => '0812 9999 0001', 'email' => 'rina@peserta.id']);
+T::ok(str_contains($ng->location(), '/t/'), 'pendaftaran tetap sukses dengan notifikasi aktif', $ng->location());
+preg_match('#/t/([A-Z0-9]{8})#', $ng->location(), $nm);
+$ncode = $nm[1] ?? '';
+usleep(500000);
+$rows = $pdo->query("SELECT channel, status, recipient, attempts, last_error FROM notifications ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+T::eq(3, count($rows), '3 notifikasi dibuat (WA, email, webhook)');
+T::eq(['sent', 'sent', 'sent'], array_column($rows, 'status'), 'semua notifikasi terkirim', json_encode($rows));
+$calls = $readJsonl($mockLog);
+$wa = array_values(array_filter($calls, static fn($c) => $c['path'] === '/send'))[0] ?? [];
+T::eq('TOKEN-RAHASIA-123', $wa['headers']['authorization'] ?? '', 'API Fonnte menerima token (header Authorization)');
+T::eq('6281299990001', $wa['post']['target'] ?? '', 'nomor tujuan WA ternormalisasi');
+T::contains('Halo Rina Notif, tiket Webinar Notifikasi: ' . $ncode, $wa['post']['message'] ?? '', 'pesan WA memakai template + placeholder');
+T::contains('/t/' . $ncode, $wa['post']['message'] ?? '', 'link tiket ada di pesan');
+T::contains('Grup: https://chat.whatsapp.com/NOTIF', $wa['post']['message'] ?? '', 'link grup ada di pesan');
+$hook = array_values(array_filter($calls, static fn($c) => $c['path'] === '/hook'))[0] ?? [];
+$hb = json_decode($hook['body'] ?? '', true);
+T::eq('registration.created', $hb['event'] ?? '', 'webhook: jenis event');
+T::eq($ncode, $hb['registration']['code'] ?? '', 'webhook: data pendaftaran');
+T::eq('sha256=' . hash_hmac('sha256', $hook['body'] ?? '', 'whsec_123'), $hook['headers']['x-presensi-signature'] ?? '', 'webhook ditandatangani HMAC-SHA256 yang valid');
+$mails = $readJsonl($smtpLog);
+T::eq(1, count($mails), 'email terkirim lewat SMTP');
+T::eq('RCPT TO:<rina@peserta.id>', $mails[0]['to'] ?? '', 'email ke alamat peserta');
+T::eq('SmtpPass!9', $mails[0]['pass'] ?? '', 'login SMTP memakai password yang didekripsi');
+T::contains('Subject: Tiket Webinar Notifikasi', $mails[0]['data'] ?? '', 'subjek email dari template');
+T::contains(base64_encode("Halo Rina Notif\nKode: " . $ncode), str_replace("\r\n", '', $mails[0]['data'] ?? ''), 'isi email dari template');
+
+// Tanpa email -> hanya WA & webhook
+$ng2 = new Http($BASE);
+$ng2->get('/e/webinar-notifikasi');
+$nts2 = $ng2->field('ts');
+// Gagal kirim WA -> antre ulang, lalu sukses setelah diperbaiki
+$envArr['NOTIFY_FONNTE_URL'] = $MOCK . '/fail';
+$writeEnv($envArr);
+sleep(2);
+$ng2->post('/e/webinar-notifikasi', ['_token' => $ng2->csrf(), 'ts' => $nts2, 'name' => 'Tono Gagal', 'wa' => '081299990002', 'email' => '']);
+usleep(500000);
+$fail = $pdo->query("SELECT * FROM notifications WHERE channel='whatsapp' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+T::eq(2, (int) $pdo->query("SELECT COUNT(*) FROM notifications n JOIN registrations r ON r.id=n.registration_id WHERE r.name='Tono Gagal'")->fetchColumn(), 'tanpa email: hanya WA + webhook');
+T::eq('pending', $fail['status'] ?? '', 'WA gagal -> dijadwalkan ulang (bukan hilang)');
+T::contains('token invalid', (string) ($fail['last_error'] ?? ''), 'alasan gagal dari API dicatat');
+T::eq(1, (int) ($fail['attempts'] ?? 0), 'jumlah percobaan tercatat');
+$admin->get('/admin/notifikasi?status=pending');
+T::contains('token invalid', $admin->body, 'riwayat menampilkan error');
+T::contains('Kirim ulang', $admin->body, 'tombol kirim ulang tersedia');
+$envArr['NOTIFY_FONNTE_URL'] = $MOCK . '/send';
+$writeEnv($envArr);
+$admin->post('/admin/notifikasi/' . $fail['id'] . '/ulang', ['_token' => $admin->csrf()]);
+$admin->follow();
+T::contains('Notifikasi terkirim ulang', $admin->body, 'kirim ulang manual berhasil');
+T::eq('sent', $pdo->query('SELECT status FROM notifications WHERE id = ' . (int) $fail['id'])->fetchColumn(), 'status menjadi terkirim');
+
+// Kirim tes
+$admin->post('/admin/notifikasi/tes', ['_token' => $admin->csrf(), 'channel' => 'whatsapp', 'target' => '081211112222']);
+$admin->follow();
+T::contains('Tes whatsapp berhasil', $admin->body, 'kirim tes WhatsApp');
+$last = $readJsonl($mockLog);
+T::contains('[TES]', end($last)['post']['message'] ?? '', 'pesan tes ditandai [TES]');
+$admin->post('/admin/notifikasi/tes', ['_token' => $admin->csrf(), 'channel' => 'email', 'target' => 'bukan-email']);
+$admin->follow();
+T::contains('Tes email gagal', $admin->body, 'tes email ke alamat tidak valid ditolak');
+
+// Simpan ulang tanpa isi token -> token lama tetap dipakai
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_token' => '', 'notify_smtp_password' => '', 'notify_webhook_secret' => '', 'notify_webhook_url' => $MOCK . '/hook'] + $notif);
+$admin->follow();
+T::eq($stored !== '' , (string) $pdo->query("SELECT value FROM app_settings WHERE `key`='notify_wa_token'")->fetchColumn() !== '', 'token lama dipertahankan saat kolom dikosongkan');
+
+// Matikan saklar utama -> tidak ada data terkirim
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => '', 'notify_webhook_url' => $MOCK . '/hook'] + $notif);
+$before = (int) $pdo->query('SELECT COUNT(*) FROM notifications')->fetchColumn();
+$ng3 = new Http($BASE);
+$ng3->get('/e/webinar-notifikasi');
+$nts3 = $ng3->field('ts');
+sleep(2);
+$ng3->post('/e/webinar-notifikasi', ['_token' => $ng3->csrf(), 'ts' => $nts3, 'name' => 'Tanpa Notif', 'wa' => '081299990003', 'email' => 'x@y.id']);
+T::ok(str_contains($ng3->location(), '/t/'), 'pendaftaran sukses saat notifikasi mati');
+T::eq($before, (int) $pdo->query('SELECT COUNT(*) FROM notifications')->fetchColumn(), 'saklar utama mati: tidak ada notifikasi dibuat');
+
+// =====================================================================
 T::group('Status, duplikat & hapus event');
 $admin->get('/admin/event');
 $admin->post('/admin/event/' . $eventId . '/status', ['_token' => $admin->csrf(), 'status' => 'draft']);

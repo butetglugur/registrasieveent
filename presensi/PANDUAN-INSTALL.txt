@@ -88,12 +88,28 @@ regenerasi session saat login, auto-logout saat idle / password diganti,
 export Excel aman dari formula injection, folder internal diblokir .htaccess,
 error tidak menampilkan detail teknis ke pengunjung (log di storage/logs).
 
-CATATAN INTEGRASI EKSTERNAL
----------------------------
-Aplikasi ini TIDAK mengirim data ke API/Webhook pihak ketiga mana pun.
-Tautan grup WhatsApp dan tombol "Kirim via WA" hanya membuka WhatsApp di
-perangkat pengguna (wa.me / chat.whatsapp.com) — tidak ada pengiriman
-otomatis. Font & library QR sudah disertakan lokal (tanpa CDN).
+NOTIFIKASI PESERTA (v2.1) — ⚠️ INTEGRASI EKSTERNAL
+--------------------------------------------------
+Menu Admin > Notifikasi (khusus Administrator). NONAKTIF secara default.
+Bila diaktifkan, setelah peserta mendaftar aplikasi MENGIRIM DATA PESERTA
+(nama, nomor WA, email, kode tiket) ke layanan pihak ketiga pilihan Anda:
+  - WhatsApp via Fonnte (api.fonnte.com) atau Wablas (server Wablas Anda)
+    -> butuh akun & token dari penyedia (berbayar/berkuota).
+  - Email via SMTP (mis. akun email hosting: mail.domainanda.com port 587)
+    atau fungsi mail() server.
+  - Webhook: POST JSON ke URL https milik Anda, ditandatangani header
+    X-Presensi-Signature: sha256=HMAC(body, secret).
+Pesan dikirim lewat antrean setelah halaman tiket tampil; bila gagal dicoba
+ulang otomatis maksimal 3x dan bisa dikirim ulang manual dari riwayat.
+Token/password disimpan terenkripsi (AES-256-GCM, kunci = APP_KEY di
+config/env.php — jangan ganti APP_KEY atau token harus diisi ulang).
+Risiko: WA gateway tidak resmi dapat membuat nomor pengirim diblokir
+WhatsApp bila mengirim massal; pastikan peserta setuju dihubungi.
+Upgrade dari v2.0: cukup timpa file (JANGAN timpa config/env.php); tabel
+baru dibuat otomatis saat halaman pertama dibuka.
+
+Di luar fitur notifikasi, aplikasi tidak memanggil layanan eksternal.
+Font & library QR sudah disertakan lokal (tanpa CDN).
 
 MASALAH UMUM
 ------------

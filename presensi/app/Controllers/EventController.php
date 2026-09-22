@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Auth;
 use App\Core\DB;
 use App\Core\HttpException;
@@ -14,6 +15,7 @@ use App\Core\Validator;
 use App\Core\ValidationException;
 use App\Models\Event;
 use App\Models\Registration;
+use App\Services\Notifier;
 
 /**
  * Halaman publik: formulir pendaftaran, tiket, kalender.
@@ -197,6 +199,15 @@ final class EventController extends Controller
             return Response::redirect(route('event.already', ['slug' => $slug]));
         }
         $reg = $result['reg'];
+
+        // ⚠️ Notifikasi ke peserta (WA gateway / email / webhook) bila diaktifkan admin.
+        // Dikirim SETELAH respons dikirim ke browser agar pendaftar tidak menunggu API eksternal.
+        $notifyIds = Notifier::queueForRegistration($reg, $event);
+        if ($notifyIds) {
+            App::terminating(static function () use ($notifyIds) {
+                Notifier::process($notifyIds, 3);
+            });
+        }
 
         // Ingat tiket milik pengunjung ini (untuk tampilan "tiket saya").
         $mine = (array) session()->get('my_tickets', []);

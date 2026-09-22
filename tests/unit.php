@@ -184,6 +184,23 @@ foreach (['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/styles.xm
 $zip->close();
 @unlink($file);
 
+T::group('Notifikasi: enkripsi rahasia & template');
+App\Core\Config::set('app.key', str_repeat('ab', 32));
+$enc = App\Core\Crypt::encrypt('token-rahasia');
+T::ok(str_starts_with($enc, 'enc:v1:') && !str_contains($enc, 'token-rahasia'), 'Crypt::encrypt menyamarkan nilai');
+T::eq('token-rahasia', App\Core\Crypt::decrypt($enc), 'Crypt::decrypt kembali ke nilai asli');
+T::ok(App\Core\Crypt::encrypt('x') !== App\Core\Crypt::encrypt('x'), 'IV acak (ciphertext berbeda tiap kali)');
+$tampered = substr($enc, 0, -2) . (substr($enc, -2) === 'AA' ? 'BB' : 'AA');
+T::eq('', App\Core\Crypt::decrypt($tampered), 'ciphertext dimodifikasi ditolak (GCM auth)');
+App\Core\Config::set('app.key', str_repeat('cd', 32));
+T::eq('', App\Core\Crypt::decrypt($enc), 'APP_KEY berbeda tidak bisa mendekripsi');
+T::eq('', App\Core\Crypt::decrypt('plain'), 'nilai tanpa prefix diabaikan');
+$out = App\Services\Notifier::render("Halo {nama}\nGrup WhatsApp: {link_grup}\nKode: {kode}", ['{nama}' => 'Budi', '{link_grup}' => '', '{kode}' => 'AB12']);
+T::eq("Halo Budi\nKode: AB12", $out, 'baris berlabel dengan placeholder kosong dihapus');
+T::contains('https://x.id', App\Services\Notifier::render('Link: {link_tiket}', ['{link_tiket}' => 'https://x.id']), 'baris berisi URL tidak terhapus');
+T::eq('=?UTF-8?B?' . base64_encode('Tiket 🎫') . '?=', App\Core\Mailer::encodeHeader("Tiket 🎫"), 'subjek email UTF-8 di-encode');
+T::eq('Subjek aman', App\Core\Mailer::encodeHeader("Subjek\r\n aman"), 'header injection (CRLF) dibuang');
+
 T::group('View engine');
 App\Core\Session::instance();
 $html = App\Core\View::make('partials.pagination', ['p' => new Paginator([], 100, 10, 2)]);

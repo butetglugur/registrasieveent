@@ -551,7 +551,33 @@
     });
   }
 
+  /* ---------------- Tampilkan bagian form sesuai pilihan (data-show-if="nama=nilai1,nilai2") ---------------- */
+  function initConditional() {
+    var form = $('[data-cond-form]');
+    if (!form) return;
+    var targets = $$('[data-show-if]', form);
+    function valueOf(name) {
+      var els = $$('[name="' + name + '"]', form);
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.type === 'radio') { if (el.checked) return el.value; }
+        else if (el.type === 'checkbox') { if (el.checked) return el.value; }
+        else return el.value;
+      }
+      return '';
+    }
+    function sync() {
+      targets.forEach(function (t) {
+        var parts = t.getAttribute('data-show-if').split('=');
+        t.hidden = parts[1].split(',').indexOf(valueOf(parts[0])) < 0;
+      });
+    }
+    form.addEventListener('change', sync);
+    sync();
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    initConditional();
     initTheme();
     initUI();
     initQr();

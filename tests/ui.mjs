@@ -171,6 +171,17 @@ await madmin.waitForTimeout(350);
 ok(await madmin.evaluate(() => document.body.classList.contains('sidebar-open')), 'menu sidebar mobile terbuka');
 await madmin.screenshot({ path: `${OUT}/14-m-sidebar.png` });
 
+group('Halaman notifikasi peserta');
+await page.goto(BASE + '/admin/notifikasi');
+ok((await page.textContent('.alert-warning')).includes('integrasi sistem eksternal'), 'peringatan integrasi eksternal tampil');
+await page.check('input[name=notify_wa_provider][value=none]', { force: true });
+ok(await page.locator('#notify_wa_token').isHidden(), 'field token disembunyikan bila provider nonaktif');
+await page.check('input[name=notify_wa_provider][value=wablas]', { force: true });
+ok(await page.locator('#notify_wablas_domain').isVisible(), 'field domain Wablas muncul saat Wablas dipilih');
+await page.check('input[name=notify_wa_provider][value=fonnte]', { force: true });
+ok(await page.locator('#notify_wablas_domain').isHidden() && await page.locator('#notify_wa_token').isVisible(), 'Fonnte: token tampil, domain Wablas tersembunyi');
+await page.screenshot({ path: `${OUT}/15-notifikasi.png`, fullPage: true });
+
 group('Error JavaScript & CSP');
 ok(errors.length === 0, 'tidak ada error JS / pelanggaran CSP', errors.join(' | '));
 

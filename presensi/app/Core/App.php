@@ -18,11 +18,49 @@ final class App
         'admin' => AdminMiddleware::class,
     ];
 
+    /** @var callable[] */
+    private static array $terminating = [];
+
+    /** Jalankan tugas setelah respons terkirim (mis. kirim notifikasi). */
+    public static function terminating(callable $fn): void
+    {
+        self::$terminating[] = $fn;
+    }
+
     public function run(): void
     {
         $response = $this->handle(Request::current());
         $this->applySecurityHeaders($response);
         $response->send();
+        $this->terminate();
+    }
+
+    private function terminate(): void
+    {
+        if (!self::$terminating) {
+            return;
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        // Putus koneksi ke browser dulu (PHP-FPM / LiteSpeed) agar pengunjung tidak menunggu.
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+        } else {
+            @ob_end_flush();
+            @flush();
+        }
+        ignore_user_abort(true);
+        foreach (self::$terminating as $fn) {
+            try {
+                $fn();
+            } catch (Throwable $e) {
+                ErrorHandler::log($e);
+            }
+        }
+        self::$terminating = [];
     }
 
     public function handle(Request $request): Response
@@ -33,6 +71,10 @@ final class App
 
             if (!$installed && !str_starts_with($path, '/install')) {
                 return Response::redirect(url('install'));
+            }
+
+            if ($installed) {
+                Migrator::ensure();
             }
 
             Session::instance()->start();

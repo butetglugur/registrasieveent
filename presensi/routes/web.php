@@ -11,6 +11,7 @@ use App\Controllers\Admin\AuthController;
 use App\Controllers\Admin\CheckinController;
 use App\Controllers\Admin\DashboardController;
 use App\Controllers\Admin\EventController as AdminEventController;
+use App\Controllers\Admin\NotificationController;
 use App\Controllers\Admin\RegistrationController;
 use App\Controllers\Admin\SettingController;
 use App\Controllers\Admin\UserController;
@@ -84,4 +85,11 @@ $r->group(['prefix' => '/admin', 'middleware' => ['auth', 'admin']], function ($
     $r->post('/pengaturan', [SettingController::class, 'update'])->name('admin.settings.update');
 
     $r->get('/aktivitas', [ActivityController::class, 'index'])->name('admin.activity');
+
+    // ⚠️ Notifikasi peserta: mengirim data ke WA gateway / SMTP / webhook pihak ketiga
+    $r->get('/notifikasi', [NotificationController::class, 'index'])->name('admin.notifications');
+    $r->post('/notifikasi', [NotificationController::class, 'update'])->name('admin.notifications.update');
+    $r->post('/notifikasi/tes', [NotificationController::class, 'test'])->name('admin.notifications.test');
+    $r->post('/notifikasi/proses', [NotificationController::class, 'processQueue'])->name('admin.notifications.process');
+    $r->post('/notifikasi/{id}/ulang', [NotificationController::class, 'retry'])->name('admin.notifications.retry');
 });
