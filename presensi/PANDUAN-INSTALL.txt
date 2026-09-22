@@ -1,0 +1,109 @@
+=====================================================================
+ PRESENSI EVENT v2 — PANDUAN INSTALASI (DirectAdmin / cPanel)
+ PHP native, struktur ala Laravel, TANPA Composer, TANPA SSH.
+=====================================================================
+
+PERSYARATAN
+-----------
+- PHP 8.0 atau lebih baru (disarankan 8.2/8.3). Atur di panel:
+  DirectAdmin: "Select PHP version" / cPanel: "Select PHP Version" / "MultiPHP Manager".
+- Ekstensi: pdo_mysql, mbstring, json (biasanya sudah aktif), zip (untuk export Excel).
+- MySQL / MariaDB.
+
+LANGKAH 1 — BUAT DATABASE
+-------------------------
+DirectAdmin: Account Manager > MySQL Management > Create new Database.
+cPanel     : MySQL Databases > buat database + user, lalu "Add User To Database"
+             dengan ALL PRIVILEGES.
+Catat: nama database, user database, password database.
+
+LANGKAH 2 — UPLOAD FILE (pilih salah satu)
+------------------------------------------
+CARA A (paling mudah):
+  1. Buka File Manager, masuk ke folder public_html domain/subdomain Anda
+     (DirectAdmin: domains/NAMADOMAIN/public_html).
+  2. Upload file ZIP ini, klik Extract.
+  3. Pindahkan SEMUA ISI folder "presensi" ke public_html (termasuk file
+     tersembunyi .htaccess). Struktur akhirnya:
+        public_html/.htaccess
+        public_html/index.php
+        public_html/app/  bootstrap/  config/  database/  public/ ...
+  File .htaccess otomatis mengarahkan request ke folder public/ dan
+  MEMBLOKIR akses ke app/, config/, storage/, dll.
+
+CARA B (paling aman, jika bisa mengatur document root subdomain):
+  Upload folder "presensi" ke luar public_html, lalu arahkan document root
+  domain/subdomain ke folder presensi/public.
+
+CARA C (subfolder): ekstrak ke public_html/presensi — aplikasi diakses di
+  https://domainanda.com/presensi (sudah didukung otomatis).
+
+LANGKAH 3 — IZIN FOLDER
+-----------------------
+Pastikan folder berikut bisa ditulis (permission 755 biasanya cukup;
+jika installer menyatakan tidak bisa ditulis, ubah ke 775):
+  - storage/  storage/logs/  storage/sessions/  storage/cache/
+  - config/
+
+LANGKAH 4 — JALANKAN INSTALLER
+------------------------------
+Buka https://domainanda.com/install lalu isi:
+  - Host database (biasanya localhost), nama DB, user, password.
+  - Nama aplikasi, URL aplikasi, dan akun admin.
+  - Centang "Impor data dari aplikasi versi lama" bila memakai database
+    yang sama dengan versi lama: peserta (tabel attendees), link grup
+    (tabel settings) dan akun admin lama (tabel admins) akan disalin.
+    Tabel lama TIDAK dihapus.
+Setelah selesai, installer TERKUNCI otomatis (file storage/installed.lock).
+PENTING: jalankan installer SEGERA setelah upload — sebelum terkunci,
+siapa pun yang membuka /install bisa melakukan instalasi.
+
+LANGKAH 5 — SETELAH INSTALL
+---------------------------
+1. Aktifkan SSL (Let's Encrypt) di panel, lalu buka file .htaccess di root
+   dan hapus tanda # pada 2 baris "Paksa HTTPS".
+2. Login admin: https://domainanda.com/admin/login
+3. Buat event > bagikan tautan / QR pendaftaran.
+4. Hari H: buka menu Check-in di HP panitia, scan QR tiket peserta
+   (kamera hanya berfungsi di HTTPS).
+
+FITUR UTAMA
+-----------
+- Multi event, form builder (teks, paragraf, email, angka, tanggal, dropdown,
+  pilihan ganda, checkbox), kuota, batas waktu daftar, tolak nomor WA ganda.
+- E-tiket QR + tombol gabung grup WhatsApp + auto-redirect + simpan tiket PNG,
+  cetak, bagikan, tambah ke kalender (.ics).
+- Check-in via kamera (scan QR), input kode manual, pencarian cepat.
+- Dasbor statistik, grafik 14 hari, filter & pencarian peserta, bulk action,
+  export Excel (.xlsx) & CSV.
+- Multi user: Administrator & Staf (staf hanya lihat peserta + check-in).
+- Log aktivitas (audit), mode gelap, tampilan mobile-friendly.
+
+KEAMANAN YANG DITERAPKAN
+------------------------
+CSRF token + cek Origin, prepared statement (anti SQL injection), escape
+output (anti XSS), Content-Security-Policy, rate-limit login (5x/15 menit)
+dan pendaftaran per IP, honeypot + time-trap anti-bot, password bcrypt,
+regenerasi session saat login, auto-logout saat idle / password diganti,
+export Excel aman dari formula injection, folder internal diblokir .htaccess,
+error tidak menampilkan detail teknis ke pengunjung (log di storage/logs).
+
+CATATAN INTEGRASI EKSTERNAL
+---------------------------
+Aplikasi ini TIDAK mengirim data ke API/Webhook pihak ketiga mana pun.
+Tautan grup WhatsApp dan tombol "Kirim via WA" hanya membuka WhatsApp di
+perangkat pengguna (wa.me / chat.whatsapp.com) — tidak ada pengiriman
+otomatis. Font & library QR sudah disertakan lokal (tanpa CDN).
+
+MASALAH UMUM
+------------
+- Halaman 500 / putih: cek storage/logs/app-TANGGAL.log. Untuk debug
+  sementara ubah 'APP_DEBUG' => true di config/env.php (kembalikan false!).
+- 404 di semua halaman selain beranda: pastikan file .htaccess ikut terupload
+  (aktifkan "show hidden files" di File Manager) dan mod_rewrite aktif.
+- Lupa password admin: di phpMyAdmin jalankan
+    UPDATE users SET password_hash = '<hash>' WHERE username='admin';
+  (hash dibuat dengan password_hash() PHP) — atau hapus
+  storage/installed.lock lalu jalankan /install lagi dengan username
+  yang sama (data tidak hilang, password akan diganti).
+- Instal ulang: hapus config/env.php dan storage/installed.lock.

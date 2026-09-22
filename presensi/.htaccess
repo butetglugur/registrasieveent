@@ -1,0 +1,35 @@
+# ==========================================================================
+#  Presensi Event — .htaccess ROOT
+#  Dipakai bila SELURUH isi folder aplikasi diunggah ke public_html.
+#  Semua request diarahkan ke folder public/, folder lain tidak bisa diakses.
+# ==========================================================================
+
+Options -Indexes -MultiViews
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Paksa HTTPS (aktifkan setelah SSL terpasang, hapus tanda # di 2 baris bawah)
+    # RewriteCond %{HTTPS} !=on
+    # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # Blokir akses langsung ke folder & file internal
+    RewriteRule ^(app|bootstrap|config|database|resources|routes|storage|tests)(/|$) - [F,L]
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+    # Teruskan semua request ke public/
+    RewriteCond %{REQUEST_URI} !(^|/)public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Lapisan tambahan: tolak file sensitif walau rewrite tidak aktif
+<FilesMatch "(^\.|\.(sql|log|lock|md|ini|sh|bak|env|dist|example)$|^(composer\.(json|lock)|package\.json)$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

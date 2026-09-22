@@ -1,0 +1,49 @@
+# ==========================================================================
+#  Presensi Event — .htaccess folder public/ (document root aplikasi)
+# ==========================================================================
+
+Options -Indexes -MultiViews
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Blokir dotfile (.env, .git, dll.)
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+    # Front controller: semua yang bukan file/folder nyata -> index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+# Header keamanan dasar untuk file statis (PHP mengatur header-nya sendiri)
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header unset X-Powered-By
+</IfModule>
+
+# Kompresi -> halaman lebih cepat
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript text/javascript application/json image/svg+xml text/plain
+</IfModule>
+
+# Cache aset statis 30 hari (URL aset sudah memakai ?v= versi)
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 30 days"
+    ExpiresByType application/javascript "access plus 30 days"
+    ExpiresByType text/javascript "access plus 30 days"
+    ExpiresByType image/svg+xml "access plus 30 days"
+    ExpiresByType image/png "access plus 30 days"
+    ExpiresByType image/jpeg "access plus 30 days"
+    ExpiresByType image/webp "access plus 30 days"
+    ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+<IfModule mod_mime.c>
+    AddType image/svg+xml .svg
+    AddType application/javascript .js
+    AddType font/woff2 .woff2
+</IfModule>
