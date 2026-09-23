@@ -10,6 +10,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/lib.php';
+date_default_timezone_set('Asia/Jakarta'); // samakan dengan zona waktu aplikasi
 
 $BASE = getenv('E2E_URL') ?: 'http://127.0.0.1:8080';
 $PREFIX = rtrim((string) parse_url($BASE, PHP_URL_PATH), '/');   // mis. /presensi bila di subfolder
@@ -583,6 +584,10 @@ $ng2 = new Http($BASE);
 $ng2->get('/e/webinar-notifikasi');
 $nts2 = $ng2->field('ts');
 // Gagal kirim WA -> antre ulang, lalu sukses setelah diperbaiki
+$resetGap = static function () use ($pdo): void {
+    $pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('wa_next_allowed_at', '0'), ('wa_batch_count', '0')");
+};
+$resetGap();
 $envArr['NOTIFY_FONNTE_URL'] = $MOCK . '/fail';
 $writeEnv($envArr);
 sleep(2);
@@ -598,6 +603,7 @@ T::contains('token invalid', $admin->body, 'riwayat menampilkan error');
 T::contains('Kirim ulang', $admin->body, 'tombol kirim ulang tersedia');
 $envArr['NOTIFY_FONNTE_URL'] = $MOCK . '/send';
 $writeEnv($envArr);
+$resetGap();
 $admin->post('/admin/notifikasi/' . $fail['id'] . '/ulang', ['_token' => $admin->csrf()]);
 $admin->follow();
 T::contains('Notifikasi terkirim ulang', $admin->body, 'kirim ulang manual berhasil');
@@ -628,6 +634,118 @@ sleep(2);
 $ng3->post('/e/webinar-notifikasi', ['_token' => $ng3->csrf(), 'ts' => $nts3, 'name' => 'Tanpa Notif', 'wa' => '081299990003', 'email' => 'x@y.id']);
 T::ok(str_contains($ng3->location(), '/t/'), 'pendaftaran sukses saat notifikasi mati');
 T::eq($before, (int) $pdo->query('SELECT COUNT(*) FROM notifications')->fetchColumn(), 'saklar utama mati: tidak ada notifikasi dibuat');
+
+// =====================================================================
+T::group('Anti-blokir WhatsApp: jeda, istirahat, batas, jam tenang');
+$setting = static fn(string $k) => (string) $pdo->query("SELECT value FROM app_settings WHERE `key` = " . $pdo->quote($k))->fetchColumn();
+$admin->get('/admin/notifikasi');
+T::contains('Anti-blokir WhatsApp', $admin->body, 'kartu anti-blokir tampil');
+T::contains(realpath($APP) . '/cron.php', $admin->body, 'perintah cron dengan path absolut ditampilkan');
+$throttle = ['notify_enabled' => '1', 'notify_wa_delay_min' => '5', 'notify_wa_delay_max' => '5', 'notify_wa_batch_size' => '2',
+    'notify_wa_batch_rest' => '1', 'notify_wa_hourly_limit' => '50', 'notify_wa_daily_limit' => '100',
+    'notify_quiet_start' => '21:00', 'notify_quiet_end' => '07:00', 'notify_webhook_enabled' => '', 'notify_email_enabled' => '',
+    'notify_webhook_url' => $MOCK . '/hook'] + $notif;
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_delay_min' => '2'] + $throttle);
+$admin->follow();
+T::contains('Jeda minimum minimal 5', $admin->body, 'jeda di bawah 5 detik ditolak');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_delay_min' => '60', 'notify_wa_delay_max' => '30'] + $throttle);
+$admin->follow();
+T::contains('Jeda maksimum harus ≥ jeda minimum', $admin->body, 'jeda maks < min ditolak');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_wa_daily_limit' => '10'] + $throttle);
+$admin->follow();
+T::contains('Batas per hari harus ≥ batas per jam', $admin->body, 'batas harian < per jam ditolak');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf()] + $throttle);
+$admin->follow();
+T::contains('Pengaturan notifikasi disimpan', $admin->body, 'pengaturan anti-blokir tersimpan');
+T::eq('5', $setting('notify_wa_delay_min'), 'jeda tersimpan');
+
+T::group('Pesan massal (broadcast) berjeda');
+$notifEventId = (int) $pdo->query("SELECT id FROM events WHERE slug='webinar-notifikasi'")->fetchColumn();
+$admin->get('/admin/broadcast?event=' . $notifEventId);
+T::eq(200, $admin->status, 'halaman pesan massal tampil');
+T::contains('integrasi eksternal', $admin->body, 'peringatan integrasi eksternal di pesan massal');
+T::contains('3 nomor', $admin->body, 'jumlah penerima dihitung');
+T::contains('perkiraan', $admin->body, 'estimasi durasi ditampilkan');
+$admin->post('/admin/broadcast', ['_token' => $admin->csrf(), 'event_id' => $notifEventId, 'audience' => 'all', 'message' => '{Halo|Hai} {nama}, pengingat {event}: kode {kode}. Detail berikut:']);
+$admin->follow();
+T::contains('Centang konfirmasi', $admin->body, 'broadcast wajib konfirmasi');
+$before = (int) $pdo->query("SELECT COUNT(*) FROM notifications")->fetchColumn();
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('wa_next_allowed_at', '0'), ('wa_batch_count', '0')");
+@unlink($mockLog);
+$admin->post('/admin/broadcast', ['_token' => $admin->csrf(), 'event_id' => $notifEventId, 'audience' => 'all', 'confirm' => '1',
+    'message' => '{Halo|Hai} {nama}, pengingat {event}: kode {kode}. Detail berikut:']);
+T::ok(str_contains($admin->location(), '/admin/notifikasi'), 'broadcast diarahkan ke antrean', $admin->location());
+$admin->follow();
+T::contains('pesan masuk antrean', $admin->body, 'pesan sukses broadcast');
+$bc = $pdo->query("SELECT * FROM notifications WHERE id > {$before} ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+T::eq(3, count($bc), '3 pesan massal masuk antrean');
+T::ok(count(array_filter($bc, static fn($r) => preg_match('/^(Halo|Hai) \S/', $r['message']) && !str_contains($r['message'], '{'))) === 3, 'spintax & placeholder diproses per penerima', $bc[0]['message'] ?? '');
+T::contains('Detail berikut:', $bc[0]['message'] ?? '', 'kalimat berakhiran titik dua tidak terhapus');
+// Halaman antrean (GET) memicu tick -> paling banyak 1 WA terkirim per request
+$sentBc = static fn() => (int) $pdo->query("SELECT COUNT(*) FROM notifications WHERE id > {$before} AND status = 'sent'")->fetchColumn();
+$jh = ['Accept: application/json', 'X-Requested-With: XMLHttpRequest'];
+$qtok = $admin->csrf(); // token dari halaman HTML terakhir, dipakai ulang untuk request JSON
+$admin->post('/admin/notifikasi/proses', ['_token' => $qtok], $jh);
+$pj = $admin->json();
+T::eq(1, $sentBc(), 'hanya 1 pesan dikirim per putaran (tidak sekaligus)');
+$admin->post('/admin/notifikasi/proses', ['_token' => $qtok], $jh);
+$pj = $admin->json();
+T::eq(1, $sentBc(), 'putaran berikutnya ditahan oleh jeda antarpesan');
+T::ok(($pj['next_at'] ?? null) !== null && ($pj['wa_pending'] ?? 0) === 2, 'respons antrean memberi jadwal kirim berikutnya', json_encode($pj));
+$nextAllowed = (int) $setting('wa_next_allowed_at');
+T::ok($nextAllowed >= time() + 3 && $nextAllowed <= time() + 6, 'jeda 5 detik diterapkan setelah pesan', (string) ($nextAllowed - time()));
+$postponed = (string) $pdo->query("SELECT MIN(next_attempt_at) FROM notifications WHERE id > {$before} AND status='pending'")->fetchColumn();
+T::ok(strtotime($postponed) >= $nextAllowed - 1, 'pesan antre dijadwalkan ulang ke waktu yang diizinkan');
+sleep(6);
+$admin->post('/admin/notifikasi/proses', ['_token' => $qtok], $jh);
+T::eq(2, $sentBc(), 'setelah jeda lewat, pesan berikutnya terkirim');
+$nextAllowed = (int) $setting('wa_next_allowed_at');
+T::ok($nextAllowed >= time() + 60, 'istirahat 1 menit setelah 2 pesan (batch)', (string) ($nextAllowed - time()));
+T::eq('0', $setting('wa_batch_count'), 'penghitung batch direset setelah istirahat');
+// Batas per jam
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('wa_next_allowed_at', '0'), ('notify_wa_hourly_limit', '1')");
+$admin->post('/admin/notifikasi/proses', ['_token' => $qtok], $jh);
+T::eq(2, $sentBc(), 'batas per jam tercapai -> pengiriman ditahan');
+T::ok(strtotime((string) $pdo->query("SELECT MIN(next_attempt_at) FROM notifications WHERE id > {$before} AND status='pending'")->fetchColumn()) > time() + 60, 'pesan dijadwalkan setelah jendela 1 jam');
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('notify_wa_hourly_limit', '50'), ('wa_next_allowed_at', '0')");
+$pdo->exec("UPDATE notifications SET next_attempt_at = NOW() WHERE status='pending'");
+// Jam tenang yang mencakup waktu sekarang
+$qs = date('H:i', time() - 3600); $qe = date('H:i', time() + 3600);
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('notify_quiet_enabled', '1'), ('notify_quiet_start', '{$qs}'), ('notify_quiet_end', '{$qe}')");
+$admin->post('/admin/notifikasi/proses', ['_token' => $qtok], $jh);
+T::eq(2, $sentBc(), 'jam tenang -> tidak ada WA terkirim');
+T::ok(strtotime((string) $pdo->query("SELECT MIN(next_attempt_at) FROM notifications WHERE id > {$before} AND status='pending'")->fetchColumn()) >= strtotime(date('Y-m-d') . ' ' . $qe) - 5, 'pesan dijadwalkan setelah jam tenang berakhir');
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('notify_quiet_enabled', '0')");
+$pdo->exec("UPDATE notifications SET next_attempt_at = NOW() WHERE status='pending'");
+// Cron via URL
+$cronToken = substr(hash_hmac('sha256', 'cron-notify', (string) $envArr['APP_KEY']), 0, 32);
+$anon->get('/cron/tokensalah');
+T::eq(404, $anon->status, 'URL cron dengan token salah -> 404');
+$anon->get('/cron/' . $cronToken . '?detik=5');
+T::eq(200, $anon->status, 'URL cron dengan token benar berjalan');
+T::eq(3, $sentBc(), 'cron mengirim pesan yang jatuh tempo');
+T::ok((int) $setting('cron_last_run') >= time() - 30, 'waktu cron terakhir tercatat');
+// Cron CLI
+$out = []; $code = 0;
+exec('php ' . escapeshellarg($APP . '/cron.php') . ' 5 2>&1', $out, $code);
+T::eq(0, $code, 'cron.php (CLI) berjalan tanpa error', implode("\n", $out));
+T::contains('terkirim=', implode("\n", $out), 'cron.php mencetak ringkasan');
+$calls = $readJsonl($mockLog);
+T::eq(3, count(array_filter($calls, static fn($c) => $c['path'] === '/send')), 'total 3 panggilan API WA untuk 3 penerima (tanpa duplikat)');
+// Batalkan antrean
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('wa_next_allowed_at', '" . (time() + 3600) . "')");
+$admin->get('/admin/broadcast?event=' . $notifEventId);
+$admin->post('/admin/broadcast', ['_token' => $admin->csrf(), 'event_id' => $notifEventId, 'audience' => 'out', 'confirm' => '1', 'message' => 'Halo {nama}, sampai jumpa di {event}.']);
+$admin->follow();
+T::contains('Batalkan antrean WA', $admin->body, 'tombol batalkan antrean tampil');
+T::contains('data-queue-poll', $admin->body, 'pemroses antrean otomatis aktif selama halaman terbuka');
+$admin->post('/admin/notifikasi/batalkan', ['_token' => $admin->csrf()]);
+$admin->follow();
+T::contains('pesan WhatsApp di antrean dibatalkan', $admin->body, 'antrean WA dibatalkan');
+T::eq(0, (int) $pdo->query("SELECT COUNT(*) FROM notifications WHERE status = 'pending' AND channel = 'whatsapp'")->fetchColumn(), 'tidak ada WA tersisa di antrean');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => ''] + $throttle);
+$admin->get('/admin/broadcast?event=' . $notifEventId);
+T::contains('belum aktif', $admin->body, 'broadcast dikunci saat notifikasi nonaktif');
 
 // =====================================================================
 T::group('Status, duplikat & hapus event');

@@ -35,6 +35,7 @@ final class Notifier
         '{link_tiket}' => 'Tautan tiket + QR',
         '{link_grup}'  => 'Link grup WhatsApp',
         '{instansi}'   => 'Instansi / perwakilan',
+        '{a|b|c}'      => 'Variasi kalimat acak (anti-spam), mis. {Halo|Hai}',
     ];
 
     public const DEFAULT_WA_TEMPLATE = "Halo {nama} 👋\n\nPendaftaran Anda untuk *{event}* berhasil.\n🗓 {tanggal}\n📍 {lokasi}\n🎫 Kode tiket: *{kode}*\n\nTiket & QR code: {link_tiket}\nGrup WhatsApp: {link_grup}\n\nTunjukkan QR saat registrasi ulang. Sampai jumpa!";
@@ -54,12 +55,26 @@ final class Notifier
         return Crypt::decrypt((string) Setting::get($key, ''));
     }
 
-    /** Ganti placeholder dengan data peserta. */
+    /**
+     * Ganti placeholder dengan data peserta. Baris yang placeholder-nya SEMUA kosong
+     * (mis. "Grup WhatsApp: {link_grup}" pada event tanpa grup) dihapus agar pesan rapi.
+     */
     public static function render(string $template, array $vars): string
     {
-        $out = strtr($template, $vars);
-        // Rapikan baris yang placeholdernya kosong, mis. "Grup WhatsApp: " tanpa link.
-        $out = preg_replace('/^[^\S\n]*[^\n:]{1,40}:[^\S\n]*(?:\n|$)/mu', '', $out) ?? $out;
+        $lines = [];
+        foreach (explode("\n", str_replace("\r\n", "\n", $template)) as $line) {
+            $used = [];
+            foreach ($vars as $ph => $val) {
+                if (str_contains($line, $ph)) {
+                    $used[] = trim((string) $val);
+                }
+            }
+            if ($used && implode('', $used) === '') {
+                continue;
+            }
+            $lines[] = strtr($line, $vars);
+        }
+        $out = implode("\n", $lines);
         $out = preg_replace("/\n{3,}/", "\n\n", $out) ?? $out;
         return trim($out);
     }
@@ -98,7 +113,7 @@ final class Notifier
             $ids[] = Notification::create([
                 'registration_id' => (int) $reg['id'], 'channel' => 'whatsapp', 'provider' => $provider,
                 'recipient' => (string) $reg['wa'],
-                'message' => self::render((string) Setting::get('notify_wa_template', self::DEFAULT_WA_TEMPLATE), $vars),
+                'message' => WaThrottle::spin(self::render((string) Setting::get('notify_wa_template', self::DEFAULT_WA_TEMPLATE), $vars)),
             ]);
         }
         if (Setting::get('notify_email_enabled', '0') === '1' && !empty($reg['email']) && filter_var($reg['email'], FILTER_VALIDATE_EMAIL)) {
@@ -134,29 +149,125 @@ final class Notifier
         return $ids;
     }
 
-    /** Proses antrean (id tertentu dan/atau yang jatuh tempo). */
-    public static function process(array $ids = [], int $dueLimit = 5): array
+    /**
+     * Proses antrean (id tertentu dan/atau yang jatuh tempo).
+     *
+     * WhatsApp melewati gerbang anti-blokir (WaThrottle): paling banyak $waBudget pesan
+     * per pemanggilan, dan hanya bila jeda/batas/jam tenang mengizinkan. Pesan yang belum
+     * boleh dikirim tetap antre dan dijadwalkan ulang otomatis.
+     *
+     * @return array{sent:int,failed:int,wa_wait_until:int}
+     */
+    public static function process(array $ids = [], int $dueLimit = 5, int $waBudget = 1): array
     {
         $ids = array_values(array_unique(array_merge(array_map('intval', $ids), $dueLimit > 0 ? Notification::dueIds($dueLimit) : [])));
-        $result = ['sent' => 0, 'failed' => 0];
+        $result = ['sent' => 0, 'failed' => 0, 'wa_wait_until' => 0];
         foreach ($ids as $id) {
-            if (!Notification::claim($id)) {
+            $peek = Notification::find($id);
+            if (!$peek || $peek['status'] !== 'pending') {
                 continue;
             }
-            $row = Notification::find($id);
-            if (!$row) {
+            $isWa = $peek['channel'] === 'whatsapp';
+            if ($isWa) {
+                if ($waBudget <= 0 || $result['wa_wait_until'] > 0) {
+                    continue;
+                }
+                if (!WaThrottle::lock()) {
+                    continue; // proses lain sedang mengirim WA
+                }
+                try {
+                    [$allowed, $until] = WaThrottle::check();
+                    if (!$allowed) {
+                        Notification::postponeWhatsApp($until);
+                        $result['wa_wait_until'] = $until;
+                        continue;
+                    }
+                    $waBudget--;
+                    self::sendRow($id, $result);
+                    WaThrottle::afterSend();
+                } finally {
+                    WaThrottle::unlock();
+                }
                 continue;
             }
-            try {
-                self::deliver($row);
-                Notification::markSent($id);
-                $result['sent']++;
-            } catch (\Throwable $e) {
-                Notification::markFailed($id, (int) $row['attempts'], $e->getMessage());
-                $result['failed']++;
-            }
+            self::sendRow($id, $result);
         }
         return $result;
+    }
+
+    private static function sendRow(int $id, array &$result): void
+    {
+        if (!Notification::claim($id)) {
+            return;
+        }
+        $row = Notification::find($id);
+        if (!$row) {
+            return;
+        }
+        try {
+            self::deliver($row);
+            Notification::markSent($id);
+            $result['sent']++;
+        } catch (\Throwable $e) {
+            Notification::markFailed($id, (int) $row['attempts'], $e->getMessage());
+            $result['failed']++;
+        }
+    }
+
+    /**
+     * Dipanggil di akhir request biasa: kirim yang jatuh tempo tanpa membuat pengunjung menunggu.
+     * Bila koneksi browser sudah ditutup (PHP-FPM/LiteSpeed) dan jeda WA tinggal sebentar,
+     * tunggu sampai boleh lalu kirim (maks. ~50 detik).
+     */
+    public static function tick(array $ids = []): void
+    {
+        if (!self::enabled()) {
+            return;
+        }
+        $r = self::process($ids, 5, 1);
+        if (\App\Core\App::$detached && $r['wa_wait_until'] > 0) {
+            $wait = $r['wa_wait_until'] - time();
+            if ($wait > 0 && $wait <= 50) {
+                @set_time_limit($wait + 30);
+                sleep($wait);
+                self::process([], 5, 1);
+            }
+        }
+    }
+
+    /**
+     * Mode cron: kirim terus selama $seconds detik dengan tetap mematuhi jeda.
+     * @return array{sent:int,failed:int}
+     */
+    public static function runFor(int $seconds): array
+    {
+        $deadline = time() + $seconds;
+        $total = ['sent' => 0, 'failed' => 0];
+        Setting::set('cron_last_run', (string) time());
+        do {
+            $r = self::process([], 20, 1);
+            $total['sent'] += $r['sent'];
+            $total['failed'] += $r['failed'];
+            if (Notification::pendingCount() === 0) {
+                break;
+            }
+            $next = $r['wa_wait_until'] ?: (int) strtotime((string) Notification::nextDueAt());
+            $sleep = max(1, $next - time());
+            if ($r['sent'] + $r['failed'] > 0 && $r['wa_wait_until'] === 0) {
+                $sleep = 1; // masih ada yang bisa dikirim sekarang
+            }
+            if (time() + $sleep > $deadline) {
+                break;
+            }
+            sleep($sleep);
+        } while (time() < $deadline);
+        return $total;
+    }
+
+    /** Token URL cron (turunan APP_KEY, tidak bisa ditebak). */
+    public static function cronToken(): string
+    {
+        return substr(hash_hmac('sha256', 'cron-notify', (string) config('app.key', '')), 0, 32);
     }
 
     /** Kirim satu notifikasi; lempar exception bila gagal. */

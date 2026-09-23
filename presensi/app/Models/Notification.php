@@ -9,7 +9,7 @@ use App\Core\Paginator;
 
 final class Notification
 {
-    public const STATUSES = ['pending' => 'Antre', 'sending' => 'Mengirim', 'sent' => 'Terkirim', 'failed' => 'Gagal'];
+    public const STATUSES = ['pending' => 'Antre', 'sending' => 'Mengirim', 'sent' => 'Terkirim', 'failed' => 'Gagal', 'cancelled' => 'Dibatalkan'];
     public const MAX_ATTEMPTS = 3;
 
     public static function create(array $data): int
@@ -57,6 +57,32 @@ final class Notification
             "SELECT id FROM notifications WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY id ASC LIMIT " . (int) $limit,
             [now()]
         ), 'id'));
+    }
+
+    /** Tunda semua WA yang antre hingga waktu tertentu (dipakai gerbang anti-blokir). */
+    public static function postponeWhatsApp(int $untilTs): void
+    {
+        $until = date('Y-m-d H:i:s', $untilTs);
+        DB::run("UPDATE notifications SET next_attempt_at = ? WHERE channel = 'whatsapp' AND status = 'pending' AND next_attempt_at < ?", [$until, $until]);
+    }
+
+    public static function cancelPendingWhatsApp(): int
+    {
+        return DB::run("UPDATE notifications SET status = 'cancelled', last_error = 'Dibatalkan admin' WHERE channel = 'whatsapp' AND status = 'pending'")->rowCount();
+    }
+
+    public static function pendingCount(string $channel = ''): int
+    {
+        if ($channel !== '') {
+            return (int) DB::value("SELECT COUNT(*) FROM notifications WHERE status IN ('pending','sending') AND channel = ?", [$channel]);
+        }
+        return (int) DB::value("SELECT COUNT(*) FROM notifications WHERE status IN ('pending','sending')");
+    }
+
+    public static function nextDueAt(): ?string
+    {
+        $v = DB::value("SELECT MIN(next_attempt_at) FROM notifications WHERE status = 'pending'");
+        return $v ? (string) $v : null;
     }
 
     public static function retry(int $id): void

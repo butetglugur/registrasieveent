@@ -205,7 +205,7 @@ final class EventController extends Controller
         $notifyIds = Notifier::queueForRegistration($reg, $event);
         if ($notifyIds) {
             App::terminating(static function () use ($notifyIds) {
-                Notifier::process($notifyIds, 3);
+                Notifier::tick($notifyIds); // prioritaskan pesan milik pendaftar ini
             });
         }
 

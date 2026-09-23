@@ -61,6 +61,7 @@ $statusBadge = ['open' => 'badge-success', 'draft' => 'badge-warning', 'closed' 
             <a href="<?= e($link) ?>" target="_blank" rel="noopener"><?= icon('external') ?> Buka halaman</a>
             <a href="<?= e(route('admin.checkin', [], ['event' => $ev['id']])) ?>"><?= icon('scan') ?> Check-in</a>
             <a href="<?= e(route('admin.registrations.export', [], ['event' => $ev['id']])) ?>"><?= icon('file') ?> Export Excel</a>
+            <a href="<?= e(route('admin.broadcast', [], ['event' => $ev['id']])) ?>"><?= icon('whatsapp') ?> Pesan massal WA</a>
             <hr>
             <?php foreach (App\Models\Event::STATUSES as $sk => $sl): if ($sk === $ev['status']) { continue; } ?>
               <form method="post" action="<?= e(route('admin.events.status', ['id' => $ev['id']])) ?>">

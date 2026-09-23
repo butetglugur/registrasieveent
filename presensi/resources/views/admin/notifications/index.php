@@ -6,7 +6,7 @@ $title = 'Notifikasi Peserta';
 $crumb = 'Kirim pesan otomatis setelah peserta mendaftar';
 $v = static function (string $k, string $default = '') { $o = old($k, null); return $o !== null ? $o : (string) setting($k, $default); };
 $on = static function (string $k) use ($v) { return $v($k, '0') === '1' ? 'checked' : ''; };
-$statusBadge = ['pending' => 'badge-warning', 'sending' => 'badge-info', 'sent' => 'badge-success', 'failed' => 'badge-danger'];
+$statusBadge = ['pending' => 'badge-warning', 'sending' => 'badge-info', 'sent' => 'badge-success', 'failed' => 'badge-danger', 'cancelled' => ''];
 $chanIcon = ['whatsapp' => 'whatsapp', 'email' => 'mail', 'webhook' => 'link'];
 $secretHint = static fn(bool $has) => $has ? '•••••••• tersimpan (terenkripsi). Kosongkan untuk tidak mengubah.' : 'Belum diisi.';
 ?>
@@ -131,6 +131,27 @@ $secretHint = static fn(bool $has) => $has ? '•••••••• tersimpan
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-header"><h3><?= icon('shield') ?> Anti-blokir WhatsApp</h3><span class="badge badge-success">Selalu aktif</span></div>
+        <div class="card-body">
+          <p class="muted small">Pesan WA dikirim <b>satu per satu</b> dengan jeda acak, istirahat berkala, dan batas harian — bukan sekaligus. Mengurangi (tidak menghilangkan) risiko nomor diblokir.</p>
+          <div class="form-grid cols-2">
+            <div class="form-group"><label class="label" for="notify_wa_delay_min">Jeda min. antarpesan (detik)</label><input id="notify_wa_delay_min" class="input <?= error('notify_wa_delay_min') ? 'is-invalid' : '' ?>" name="notify_wa_delay_min" value="<?= e($v('notify_wa_delay_min', '20')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_delay_min']) ?></div>
+            <div class="form-group"><label class="label" for="notify_wa_delay_max">Jeda maks. (detik)</label><input id="notify_wa_delay_max" class="input <?= error('notify_wa_delay_max') ? 'is-invalid' : '' ?>" name="notify_wa_delay_max" value="<?= e($v('notify_wa_delay_max', '45')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_delay_max']) ?></div>
+            <div class="form-group"><label class="label" for="notify_wa_batch_size">Istirahat setiap … pesan</label><input id="notify_wa_batch_size" class="input <?= error('notify_wa_batch_size') ? 'is-invalid' : '' ?>" name="notify_wa_batch_size" value="<?= e($v('notify_wa_batch_size', '15')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_batch_size']) ?></div>
+            <div class="form-group"><label class="label" for="notify_wa_batch_rest">Lama istirahat (menit)</label><input id="notify_wa_batch_rest" class="input <?= error('notify_wa_batch_rest') ? 'is-invalid' : '' ?>" name="notify_wa_batch_rest" value="<?= e($v('notify_wa_batch_rest', '5')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_batch_rest']) ?></div>
+            <div class="form-group"><label class="label" for="notify_wa_hourly_limit">Maks. pesan per jam</label><input id="notify_wa_hourly_limit" class="input <?= error('notify_wa_hourly_limit') ? 'is-invalid' : '' ?>" name="notify_wa_hourly_limit" value="<?= e($v('notify_wa_hourly_limit', '60')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_hourly_limit']) ?></div>
+            <div class="form-group"><label class="label" for="notify_wa_daily_limit">Maks. pesan per hari</label><input id="notify_wa_daily_limit" class="input <?= error('notify_wa_daily_limit') ? 'is-invalid' : '' ?>" name="notify_wa_daily_limit" value="<?= e($v('notify_wa_daily_limit', '300')) ?>" inputmode="numeric"><?= $this->partial('partials.field-error', ['field' => 'notify_wa_daily_limit']) ?></div>
+          </div>
+          <label class="switch mb-1"><input type="checkbox" name="notify_quiet_enabled" value="1" <?= $on('notify_quiet_enabled') ?>> Jam tenang (tidak mengirim WA)</label>
+          <div class="form-grid cols-2" data-show-if="notify_quiet_enabled=1">
+            <div class="form-group"><label class="label" for="notify_quiet_start">Mulai</label><input id="notify_quiet_start" type="time" class="input <?= error('notify_quiet_start') ? 'is-invalid' : '' ?>" name="notify_quiet_start" value="<?= e($v('notify_quiet_start', '21:00')) ?>"><?= $this->partial('partials.field-error', ['field' => 'notify_quiet_start']) ?></div>
+            <div class="form-group"><label class="label" for="notify_quiet_end">Selesai</label><input id="notify_quiet_end" type="time" class="input <?= error('notify_quiet_end') ? 'is-invalid' : '' ?>" name="notify_quiet_end" value="<?= e($v('notify_quiet_end', '07:00')) ?>"><?= $this->partial('partials.field-error', ['field' => 'notify_quiet_end']) ?></div>
+          </div>
+          <div class="hint">Saran nomor baru: jeda 30–60 dtk, 30/jam, 150/hari. Variasikan kalimat dengan <code>{Halo|Hai}</code> di template.</div>
+        </div>
+      </div>
+
       <button class="btn btn-primary btn-lg btn-block" type="submit"><span class="spinner"></span><?= icon('save') ?> Simpan pengaturan notifikasi</button>
     </div>
   </div>
@@ -150,14 +171,25 @@ $secretHint = static fn(bool $has) => $has ? '•••••••• tersimpan
       <button class="btn btn-soft" type="submit"><span class="spinner"></span><?= icon('arrow-right') ?> Kirim tes</button>
     </div>
   </form>
-  <div class="card">
-    <div class="card-header"><h3><?= icon('info') ?> Cara kerja</h3></div>
+  <div class="card" data-queue-poll="<?= e(route('admin.notifications.process')) ?>" data-wa-pending="<?= (int) $waPending ?>">
+    <div class="card-header"><h3><?= icon('clock') ?> Antrean & cron</h3>
+      <a class="btn btn-sm btn-soft" href="<?= e(route('admin.broadcast')) ?>"><?= icon('users') ?> Pesan massal</a></div>
     <div class="card-body small text-2">
-      <ol style="margin:0;padding-left:1.2rem;display:grid;gap:.4rem">
-        <li>Peserta mendaftar → pesan masuk <b>antrean</b> dan dikirim setelah halaman tiket tampil (peserta tidak menunggu API).</li>
-        <li>Jika gagal, dicoba ulang otomatis maksimal <?= App\Models\Notification::MAX_ATTEMPTS ?>× (1 menit, lalu 5 menit) setiap ada admin membuka panel.</li>
-        <li>Token & password disimpan terenkripsi AES-256 di database dan tidak pernah ditampilkan ulang.</li>
-      </ol>
+      <p class="mb-1"><b data-q-wa><?= number_id($waPending) ?></b> WhatsApp antre.
+        <?php if ($waNextAt > time()): ?>Pesan berikutnya boleh dikirim pukul <b><?= e(date('H:i:s', $waNextAt)) ?></b>.<?php endif; ?>
+        <span data-q-status></span></p>
+      <?php if ($waPending > 0): ?>
+        <form method="post" action="<?= e(route('admin.notifications.cancel')) ?>" data-confirm="Batalkan semua pesan WhatsApp yang belum terkirim?" class="mb-1">
+          <?= csrf_field() ?><button class="btn btn-sm btn-danger-soft" type="submit"><?= icon('x-circle') ?> Batalkan antrean WA</button>
+        </form>
+        <p class="mb-1"><?= icon('info') ?> Selama halaman ini terbuka, antrean diproses otomatis (sesuai jeda).</p>
+      <?php endif; ?>
+      <div class="form-section-title mt-1">Cron job (disarankan)</div>
+      <p class="mb-1">Agar antrean tetap jalan walau tidak ada yang membuka situs, tambahkan cron <b>setiap menit</b> (<code>* * * * *</code>) di DirectAdmin → <i>Advanced Features → Cron Jobs</i>:</p>
+      <div class="share-box mb-1"><code><?= e($cronCmd) ?></code><button type="button" class="btn btn-sm btn-ghost" data-copy="<?= e($cronCmd) ?>"><?= icon('copy') ?></button></div>
+      <p class="mb-1">Atau bila perintah PHP tidak tersedia:</p>
+      <div class="share-box mb-1"><code>wget -q -O /dev/null "<?= e($cronUrl) ?>"</code><button type="button" class="btn btn-sm btn-ghost" data-copy="wget -q -O /dev/null &quot;<?= e($cronUrl) ?>&quot;"><?= icon('copy') ?></button></div>
+      <p class="mb-0">Cron terakhir berjalan: <b><?= $cronLast ? e(date_id(date('Y-m-d H:i:s', $cronLast)) . ' (' . time_ago(date('Y-m-d H:i:s', $cronLast)) . ')') : 'belum pernah' ?></b>. URL cron bersifat rahasia — jangan dibagikan.</p>
     </div>
   </div>
 </div>

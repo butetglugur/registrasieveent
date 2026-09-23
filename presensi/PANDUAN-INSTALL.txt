@@ -108,6 +108,29 @@ WhatsApp bila mengirim massal; pastikan peserta setuju dihubungi.
 Upgrade dari v2.0: cukup timpa file (JANGAN timpa config/env.php); tabel
 baru dibuat otomatis saat halaman pertama dibuka.
 
+ANTI-BLOKIR WHATSAPP & PESAN MASSAL (v2.2)
+------------------------------------------
+Pesan WA TIDAK pernah dikirim sekaligus. Setiap pesan melewati "gerbang":
+  - jeda acak antarpesan (default 20–45 detik),
+  - istirahat setiap N pesan (default 5 menit tiap 15 pesan),
+  - batas per jam & per hari (default 60/jam, 300/hari),
+  - jam tenang opsional (mis. 21:00–07:00),
+  - variasi kalimat {Halo|Hai|Selamat pagi} agar tiap pesan tidak identik.
+Menu "Pesan Massal": kirim pengingat ke semua / belum hadir / sudah hadir,
+lengkap dengan perkiraan lama pengiriman dan tombol "Batalkan antrean".
+Saran nomor baru: jeda 30–60 detik, 30/jam, 150/hari, lalu naikkan bertahap.
+Semua ini MENGURANGI risiko, tidak menjamin nomor tidak diblokir.
+
+AGAR ANTREAN BERJALAN — PASANG CRON (disarankan, tanpa SSH):
+  DirectAdmin: Advanced Features > Cron Jobs  |  cPanel: Cron Jobs
+  Jadwal   : * * * * *  (setiap menit)
+  Perintah : php /home/USER/domains/DOMAIN/public_html/cron.php
+  (path lengkap yang benar ditampilkan di menu Admin > Notifikasi)
+  Alternatif bila perintah php tidak tersedia:
+    wget -q -O /dev/null "https://DOMAIN/cron/TOKEN"   (URL ada di menu Notifikasi)
+Tanpa cron, antrean hanya berjalan saat ada pengunjung/pendaftar atau saat
+halaman Admin > Notifikasi dibiarkan terbuka.
+
 Di luar fitur notifikasi, aplikasi tidak memanggil layanan eksternal.
 Font & library QR sudah disertakan lokal (tanpa CDN).
 

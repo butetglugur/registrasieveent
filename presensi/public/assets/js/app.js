@@ -576,7 +576,40 @@
     sync();
   }
 
+  /* ---------------- Select yang berpindah halaman ---------------- */
+  function initNavSelect() {
+    $$('[data-nav-select]').forEach(function (sel) {
+      sel.addEventListener('change', function () { window.location.href = sel.getAttribute('data-nav-select') + encodeURIComponent(sel.value); });
+    });
+  }
+
+  /* ---------------- Pemroses antrean selama halaman admin terbuka ---------------- */
+  function initQueuePoller() {
+    var box = $('[data-queue-poll]');
+    if (!box || parseInt(box.getAttribute('data-wa-pending'), 10) <= 0) return;
+    var url = box.getAttribute('data-queue-poll'), status = $('[data-q-status]', box), count = $('[data-q-wa]', box), busy = false;
+    function tick() {
+      if (busy || document.hidden) return;
+      busy = true;
+      var body = new URLSearchParams(); body.set('_token', csrf());
+      fetch(url, { method: 'POST', body: body, credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-TOKEN': csrf() } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (count) count.textContent = (d.wa_pending || 0).toLocaleString('id-ID');
+          if (status) status.textContent = d.wa_pending ? (d.next_at ? ' Berikutnya ± pukul ' + d.next_at + '.' : ' Mengirim…') : ' Antrean selesai ✓';
+          if (d.sent) toast(d.sent + ' pesan terkirim');
+          if (!d.wa_pending) clearInterval(timer);
+        })
+        .catch(function () { if (status) status.textContent = ' (gagal memproses, mencoba lagi…)'; })
+        .then(function () { busy = false; });
+    }
+    var timer = setInterval(tick, 15000);
+    setTimeout(tick, 2000);
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    initNavSelect();
+    initQueuePoller();
     initConditional();
     initTheme();
     initUI();

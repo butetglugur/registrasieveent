@@ -49,6 +49,16 @@ final class Setting
         return $default ?? (self::DEFAULTS[$key] ?? null);
     }
 
+    /** Baca langsung dari database (tanpa cache) — untuk nilai yang sering berubah. */
+    public static function fresh(string $key, ?string $default = null): ?string
+    {
+        $v = DB::value('SELECT value FROM app_settings WHERE `key` = ?', [$key]);
+        if (self::$cache !== null) {
+            self::$cache[$key] = $v === null ? null : (string) $v;
+        }
+        return $v === null ? $default : (string) $v;
+    }
+
     public static function set(string $key, ?string $value): void
     {
         DB::run(

@@ -11,6 +11,7 @@ $__nav = [
     ['Pengguna', 'admin.users', 'shield', '/admin/pengguna', true],
     ['Pengaturan', 'admin.settings', 'settings', '/admin/pengaturan', true],
     ['Notifikasi', 'admin.notifications', 'mail', '/admin/notifikasi', true],
+    ['Pesan Massal', 'admin.broadcast', 'whatsapp', '/admin/broadcast', true],
     ['Log Aktivitas', 'admin.activity', 'activity', '/admin/aktivitas', true],
 ];
 $__initials = static function (string $n): string {

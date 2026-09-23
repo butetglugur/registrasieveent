@@ -13,6 +13,7 @@ use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Setting;
 use App\Services\Notifier;
+use App\Services\WaThrottle;
 
 /**
  * Pengaturan notifikasi peserta (khusus Administrator).
@@ -30,7 +31,12 @@ final class NotificationController extends Controller
             'hasSecret' => array_combine(Notifier::SECRET_KEYS, array_map(
                 static fn($k) => (string) Setting::get($k, '') !== '', Notifier::SECRET_KEYS
             )),
-            'preview' => Notifier::render((string) setting('notify_wa_template', Notifier::DEFAULT_WA_TEMPLATE), Notifier::sampleVars()),
+            'preview' => WaThrottle::spin(Notifier::render((string) setting('notify_wa_template', Notifier::DEFAULT_WA_TEMPLATE), Notifier::sampleVars())),
+            'waPending' => Notification::pendingCount('whatsapp'),
+            'waNextAt'  => (int) Setting::fresh('wa_next_allowed_at', '0'),
+            'cronLast'  => (int) Setting::fresh('cron_last_run', '0'),
+            'cronUrl'   => full_url('cron/' . Notifier::cronToken()),
+            'cronCmd'   => 'php ' . base_path('cron.php'),
         ]);
     }
 
@@ -41,7 +47,14 @@ final class NotificationController extends Controller
             'notify_wa_provider', 'notify_wablas_domain', 'notify_wa_template',
             'notify_email_driver', 'notify_smtp_host', 'notify_smtp_port', 'notify_smtp_encryption', 'notify_smtp_username',
             'notify_mail_from', 'notify_mail_from_name', 'notify_email_subject', 'notify_email_template', 'notify_webhook_url',
+            'notify_wa_delay_min', 'notify_wa_delay_max', 'notify_wa_batch_size', 'notify_wa_batch_rest',
+            'notify_wa_hourly_limit', 'notify_wa_daily_limit', 'notify_quiet_start', 'notify_quiet_end',
         ]);
+        foreach (WaThrottle::DEFAULTS as $k => $def) {
+            if (array_key_exists($k, $data) && $data[$k] === '') {
+                $data[$k] = $def;
+            }
+        }
         // Template boleh multi-baris: ambil mentah (hanya buang karakter kontrol).
         foreach (['notify_wa_template', 'notify_email_template'] as $k) {
             $raw = $request->input($k, '');
@@ -51,6 +64,7 @@ final class NotificationController extends Controller
             'notify_enabled'         => $request->bool('notify_enabled'),
             'notify_email_enabled'   => $request->bool('notify_email_enabled'),
             'notify_webhook_enabled' => $request->bool('notify_webhook_enabled'),
+            'notify_quiet_enabled'   => $request->bool('notify_quiet_enabled'),
         ];
         $rules = [
             'notify_wa_provider'     => 'required|in:' . implode(',', array_keys(Notifier::WA_PROVIDERS)),
@@ -66,14 +80,33 @@ final class NotificationController extends Controller
             'notify_email_subject'   => 'nullable|max:200',
             'notify_email_template'  => 'nullable|max:4000',
             'notify_webhook_url'     => 'nullable|url|max:190',
+            // Anti-blokir WhatsApp
+            'notify_wa_delay_min'    => 'required|integer|numeric|min:5|max:600',
+            'notify_wa_delay_max'    => 'required|integer|numeric|min:5|max:900',
+            'notify_wa_batch_size'   => 'required|integer|numeric|min:1|max:500',
+            'notify_wa_batch_rest'   => 'required|integer|numeric|min:0|max:180',
+            'notify_wa_hourly_limit' => 'required|integer|numeric|min:1|max:1000',
+            'notify_wa_daily_limit'  => 'required|integer|numeric|min:1|max:10000',
+            // Format array: pola regex mengandung "|" sehingga tidak boleh digabung dengan pemisah aturan
+            'notify_quiet_start'     => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            'notify_quiet_end'       => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
         ];
         $labels = [
             'notify_wablas_domain' => 'Domain server Wablas', 'notify_wa_template' => 'Template WhatsApp',
             'notify_smtp_host' => 'Host SMTP', 'notify_smtp_port' => 'Port SMTP', 'notify_mail_from' => 'Email pengirim',
             'notify_email_subject' => 'Subjek email', 'notify_email_template' => 'Template email', 'notify_webhook_url' => 'URL webhook',
+            'notify_wa_delay_min' => 'Jeda minimum', 'notify_wa_delay_max' => 'Jeda maksimum', 'notify_wa_batch_size' => 'Jumlah pesan per sesi',
+            'notify_wa_batch_rest' => 'Lama istirahat', 'notify_wa_hourly_limit' => 'Batas per jam', 'notify_wa_daily_limit' => 'Batas per hari',
+            'notify_quiet_start' => 'Jam tenang mulai', 'notify_quiet_end' => 'Jam tenang selesai',
         ];
         $v = \App\Core\Validator::make($data, $rules, $labels);
         $v->fails();
+        if ((int) $data['notify_wa_delay_max'] < (int) $data['notify_wa_delay_min']) {
+            $v->addError('notify_wa_delay_max', 'Jeda maksimum harus ≥ jeda minimum.');
+        }
+        if ((int) $data['notify_wa_daily_limit'] < (int) $data['notify_wa_hourly_limit']) {
+            $v->addError('notify_wa_daily_limit', 'Batas per hari harus ≥ batas per jam.');
+        }
         // Wajib-bersyarat sesuai kanal yang diaktifkan.
         if ($data['notify_wa_provider'] === 'wablas' && $data['notify_wablas_domain'] === '') {
             $v->addError('notify_wablas_domain', 'Domain server Wablas wajib diisi, mis. https://jkt.wablas.com');
@@ -144,7 +177,11 @@ final class NotificationController extends Controller
                 if (!valid_wa($wa)) {
                     return Response::redirect($back)->with('error', 'Nomor WhatsApp tujuan tes tidak valid.');
                 }
-                Notifier::sendWhatsApp($provider, $wa, '[TES] ' . Notifier::render((string) Setting::get('notify_wa_template', Notifier::DEFAULT_WA_TEMPLATE), $vars));
+                try {
+                    Notifier::sendWhatsApp($provider, $wa, '[TES] ' . WaThrottle::spin(Notifier::render((string) Setting::get('notify_wa_template', Notifier::DEFAULT_WA_TEMPLATE), $vars)));
+                } finally {
+                    WaThrottle::afterSend(); // pesan tes ikut dihitung dalam jeda anti-blokir
+                }
             } elseif ($channel === 'email') {
                 Notifier::sendEmail($target, '[TES] ' . Notifier::render((string) Setting::get('notify_email_subject', Notifier::DEFAULT_EMAIL_SUBJECT), $vars),
                     Notifier::render((string) Setting::get('notify_email_template', Notifier::DEFAULT_EMAIL_TEMPLATE), $vars));
@@ -171,14 +208,51 @@ final class NotificationController extends Controller
             throw new HttpException(404);
         }
         Notification::retry((int) $row['id']);
-        $r = Notifier::process([(int) $row['id']], 0);
-        $ok = $r['sent'] > 0;
-        return back(route('admin.notifications'))->with($ok ? 'success' : 'error', $ok ? 'Notifikasi terkirim ulang.' : 'Masih gagal: ' . (string) (Notification::find((int) $row['id'])['last_error'] ?? '-'));
+        $r = Notifier::process([(int) $row['id']], 0, 1);
+        $fresh = Notification::find((int) $row['id']);
+        $back = back(route('admin.notifications'));
+        if (($fresh['status'] ?? '') === 'sent') {
+            return $back->with('success', 'Notifikasi terkirim ulang.');
+        }
+        if ($r['wa_wait_until'] > 0) {
+            return $back->with('info', 'Masuk antrean. Dikirim sekitar pukul ' . date('H:i:s', $r['wa_wait_until'])
+                . ' sesuai jeda anti-blokir WhatsApp.');
+        }
+        return $back->with('error', 'Masih gagal: ' . (string) ($fresh['last_error'] ?? '-'));
     }
 
+    /** Proses antrean (tombol / poller JS saat halaman admin terbuka). */
     public function processQueue(Request $request): Response
     {
-        $r = Notifier::process([], 50);
-        return back(route('admin.notifications'))->with('success', sprintf('Antrean diproses: %d terkirim, %d gagal.', $r['sent'], $r['failed']));
+        $r = Notifier::process([], 20, 1);
+        $pending = Notification::pendingCount();
+        $waPending = Notification::pendingCount('whatsapp');
+        $nextTs = $r['wa_wait_until'];
+        if ($nextTs === 0 && $waPending > 0) {
+            // Pesan sudah dijadwalkan ulang sebelumnya: laporkan kapan giliran berikutnya.
+            $nextTs = max((int) Setting::fresh('wa_next_allowed_at', '0'), (int) strtotime((string) Notification::nextDueAt()));
+            $nextTs = $nextTs > time() ? $nextTs : 0;
+        }
+        $data = [
+            'ok' => true, 'sent' => $r['sent'], 'failed' => $r['failed'], 'pending' => $pending,
+            'wa_pending' => $waPending,
+            'next_at' => $nextTs > 0 ? date('H:i:s', $nextTs) : null,
+            'counts' => Notification::counts(),
+        ];
+        if ($request->wantsJson()) {
+            return Response::json($data);
+        }
+        $msg = sprintf('Antrean diproses: %d terkirim, %d gagal, %d masih antre.', $r['sent'], $r['failed'], $pending);
+        if ($data['next_at']) {
+            $msg .= ' WhatsApp berikutnya dikirim sekitar pukul ' . $data['next_at'] . ' (jeda anti-blokir).';
+        }
+        return back(route('admin.notifications'))->with('success', $msg);
+    }
+
+    public function cancel(Request $request): Response
+    {
+        $n = Notification::cancelPendingWhatsApp();
+        ActivityLog::record('notify_cancel', 'Membatalkan ' . $n . ' pesan WhatsApp di antrean');
+        return back(route('admin.notifications'))->with('success', $n . ' pesan WhatsApp di antrean dibatalkan.');
     }
 }

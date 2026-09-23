@@ -15,6 +15,8 @@ use App\Controllers\Admin\NotificationController;
 use App\Controllers\Admin\RegistrationController;
 use App\Controllers\Admin\SettingController;
 use App\Controllers\Admin\UserController;
+use App\Controllers\Admin\BroadcastController;
+use App\Controllers\CronController;
 use App\Controllers\EventController;
 use App\Controllers\HomeController;
 use App\Controllers\InstallController;
@@ -30,6 +32,9 @@ $r->post('/e/{slug}', [EventController::class, 'register'])->name('event.registe
 $r->get('/e/{slug}/terdaftar', [EventController::class, 'already'])->name('event.already');
 $r->get('/e/{slug}/kalender.ics', [EventController::class, 'ics'])->name('event.ics');
 $r->get('/t/{code}', [EventController::class, 'ticket'])->name('ticket');
+
+// Pemicu antrean notifikasi dari cron eksternal (token rahasia turunan APP_KEY)
+$r->get('/cron/{token}', [CronController::class, 'run'])->name('cron');
 
 // Kompatibilitas URL versi lama
 $r->get('/index.php', [HomeController::class, 'index']);
@@ -91,5 +96,10 @@ $r->group(['prefix' => '/admin', 'middleware' => ['auth', 'admin']], function ($
     $r->post('/notifikasi', [NotificationController::class, 'update'])->name('admin.notifications.update');
     $r->post('/notifikasi/tes', [NotificationController::class, 'test'])->name('admin.notifications.test');
     $r->post('/notifikasi/proses', [NotificationController::class, 'processQueue'])->name('admin.notifications.process');
+    $r->post('/notifikasi/batalkan', [NotificationController::class, 'cancel'])->name('admin.notifications.cancel');
     $r->post('/notifikasi/{id}/ulang', [NotificationController::class, 'retry'])->name('admin.notifications.retry');
+
+    // ⚠️ Pesan massal WhatsApp ke peserta (lewat antrean berjeda anti-blokir)
+    $r->get('/broadcast', [BroadcastController::class, 'create'])->name('admin.broadcast');
+    $r->post('/broadcast', [BroadcastController::class, 'store'])->name('admin.broadcast.store');
 });

@@ -20,6 +20,8 @@ final class App
 
     /** @var callable[] */
     private static array $terminating = [];
+    /** true bila koneksi browser sudah ditutup (tugas latar tidak membuat pengunjung menunggu). */
+    public static bool $detached = false;
 
     /** Jalankan tugas setelah respons terkirim (mis. kirim notifikasi). */
     public static function terminating(callable $fn): void
@@ -46,8 +48,10 @@ final class App
         // Putus koneksi ke browser dulu (PHP-FPM / LiteSpeed) agar pengunjung tidak menunggu.
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
+            self::$detached = true;
         } elseif (function_exists('litespeed_finish_request')) {
             litespeed_finish_request();
+            self::$detached = true;
         } else {
             @ob_end_flush();
             @flush();
@@ -75,6 +79,13 @@ final class App
 
             if ($installed) {
                 Migrator::ensure();
+                // Antrean notifikasi diproses di akhir request (setelah halaman terkirim), dengan
+                // tetap mematuhi jeda anti-blokir. Endpoint cron memprosesnya sendiri.
+                if (!str_starts_with($path, '/cron/') && \App\Services\Notifier::enabled()) {
+                    self::terminating(static function () {
+                        \App\Services\Notifier::tick();
+                    });
+                }
             }
 
             Session::instance()->start();

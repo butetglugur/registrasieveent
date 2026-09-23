@@ -182,6 +182,12 @@ await page.check('input[name=notify_wa_provider][value=fonnte]', { force: true }
 ok(await page.locator('#notify_wablas_domain').isHidden() && await page.locator('#notify_wa_token').isVisible(), 'Fonnte: token tampil, domain Wablas tersembunyi');
 await page.screenshot({ path: `${OUT}/15-notifikasi.png`, fullPage: true });
 
+group('Pesan massal');
+await page.goto(BASE + '/admin/broadcast');
+await Promise.all([page.waitForNavigation(), page.selectOption('[data-nav-select]', { index: 1 })]);
+ok(page.url().includes('event='), 'memilih event memuat jumlah penerima');
+await page.screenshot({ path: `${OUT}/16-broadcast.png`, fullPage: true });
+
 group('Error JavaScript & CSP');
 ok(errors.length === 0, 'tidak ada error JS / pelanggaran CSP', errors.join(' | '));
 

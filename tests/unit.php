@@ -201,6 +201,19 @@ T::contains('https://x.id', App\Services\Notifier::render('Link: {link_tiket}', 
 T::eq('=?UTF-8?B?' . base64_encode('Tiket 🎫') . '?=', App\Core\Mailer::encodeHeader("Tiket 🎫"), 'subjek email UTF-8 di-encode');
 T::eq('Subjek aman', App\Core\Mailer::encodeHeader("Subjek\r\n aman"), 'header injection (CRLF) dibuang');
 
+T::group('Anti-blokir: spintax & estimasi');
+$sp = App\Services\WaThrottle::spin('{Halo|Hai} Budi, {apa kabar|semoga sehat}? {nama}');
+T::ok((bool) preg_match('/^(Halo|Hai) Budi, (apa kabar|semoga sehat)\? \{nama\}$/', $sp), 'spintax memilih salah satu & placeholder tanpa | tidak disentuh', $sp);
+$seen = [];
+for ($i = 0; $i < 60; $i++) { $seen[App\Services\WaThrottle::spin('{A|B|C}')] = 1; }
+T::eq(3, count($seen), 'spintax acak mencakup semua pilihan');
+$nested = App\Services\WaThrottle::spin('{Halo {Budi|Ani}|Hai}');
+T::ok(in_array($nested, ['Halo Budi', 'Halo Ani', 'Hai'], true), 'spintax bersarang diproses dari dalam', $nested);
+T::eq("Kalimat berakhir:\nKode: X", App\Services\Notifier::render("Kalimat berakhir:\nKode: {kode}", ['{kode}' => 'X']), 'baris berakhiran titik dua tanpa placeholder dipertahankan');
+T::eq(0, App\Services\WaThrottle::estimateSeconds(0), 'estimasi 0 pesan');
+T::ok(App\Services\WaThrottle::estimateSeconds(100) >= 3600, 'estimasi 100 pesan ≥ 1 jam (batas 60/jam)');
+T::eq('± 1 jam 30 menit', App\Services\WaThrottle::humanDuration(5400), 'format durasi');
+
 T::group('View engine');
 App\Core\Session::instance();
 $html = App\Core\View::make('partials.pagination', ['p' => new Paginator([], 100, 10, 2)]);
