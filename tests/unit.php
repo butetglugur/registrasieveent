@@ -214,6 +214,16 @@ T::eq(0, App\Services\WaThrottle::estimateSeconds(0), 'estimasi 0 pesan');
 T::ok(App\Services\WaThrottle::estimateSeconds(100) >= 3600, 'estimasi 100 pesan ≥ 1 jam (batas 60/jam)');
 T::eq('± 1 jam 30 menit', App\Services\WaThrottle::humanDuration(5400), 'format durasi');
 
+T::group('Pengingat H-1: aturan kelayakan');
+use App\Services\Reminder as Rm;
+T::eq(strtotime('2026-12-19 09:00:00'), Rm::reminderAt('2026-12-20 13:00:00', '09:00'), 'waktu kirim = H-1 pada jam yang diatur');
+T::eq(strtotime('2026-12-31 08:30:00'), Rm::reminderAt('2027-01-01 07:00:00', '08:30'), 'H-1 melewati pergantian tahun');
+T::ok(Rm::eligible('2026-12-10 10:00:00', '2026-12-20 13:00:00', '09:00'), 'daftar 10 hari sebelumnya -> diingatkan');
+T::ok(!Rm::eligible('2026-12-19 20:00:00', '2026-12-20 13:00:00', '09:00'), 'daftar 17 jam sebelum acara (< 1 hari) -> tidak');
+T::ok(!Rm::eligible('2026-12-19 10:00:00', '2026-12-20 13:00:00', '09:00'), 'daftar 27 jam sebelumnya tapi setelah jam pengingat -> tidak (hindari pesan dobel)');
+T::ok(Rm::eligible('2026-12-19 08:00:00', '2026-12-20 13:00:00', '09:00'), 'daftar 29 jam sebelumnya & sebelum jam pengingat -> diingatkan');
+T::ok(!Rm::eligible('2026-12-19 13:00:00', '2026-12-20 13:00:00', '09:00'), 'tepat 24 jam (bukan lebih dari 1 hari) -> tidak');
+
 T::group('View engine');
 App\Core\Session::instance();
 $html = App\Core\View::make('partials.pagination', ['p' => new Paginator([], 100, 10, 2)]);

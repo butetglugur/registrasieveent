@@ -10,6 +10,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/lib.php';
+function now_e2e(): string { return date('Y-m-d H:i:s'); }
 date_default_timezone_set('Asia/Jakarta'); // samakan dengan zona waktu aplikasi
 
 $BASE = getenv('E2E_URL') ?: 'http://127.0.0.1:8080';
@@ -508,7 +509,7 @@ $anon = new Http($BASE);
 $anon->get('/');
 T::eq(200, $anon->status, 'situs tetap jalan saat upgrade');
 T::eq(1, (int) $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'notifications'")->fetchColumn(), 'tabel notifications dibuat otomatis (migrasi)');
-T::eq('2', (string) $pdo->query("SELECT value FROM app_settings WHERE `key`='schema_version'")->fetchColumn(), 'versi skema tercatat');
+T::eq('3', (string) $pdo->query("SELECT value FROM app_settings WHERE `key`='schema_version'")->fetchColumn(), 'versi skema terbaru tercatat');
 $anon->get('/admin/notifikasi');
 T::eq(302, $anon->status, 'halaman notifikasi butuh login');
 $admin->get('/admin/notifikasi');
@@ -746,6 +747,93 @@ T::eq(0, (int) $pdo->query("SELECT COUNT(*) FROM notifications WHERE status = 'p
 $admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => ''] + $throttle);
 $admin->get('/admin/broadcast?event=' . $notifEventId);
 T::contains('belum aktif', $admin->body, 'broadcast dikunci saat notifikasi nonaktif');
+
+// =====================================================================
+T::group('Pengingat H-1');
+// Migrasi v3 untuk instalasi yang sudah ada (kolom baru dibuat otomatis)
+$pdo->exec('ALTER TABLE registrations DROP COLUMN reminded_at');
+$pdo->exec('ALTER TABLE events DROP COLUMN send_reminder');
+$pdo->exec('ALTER TABLE notifications DROP COLUMN kind, DROP COLUMN expires_at');
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('schema_version', '2')");
+$anon->get('/');
+T::eq(200, $anon->status, 'situs jalan saat upgrade ke skema v3');
+$cols = $pdo->query("SELECT CONCAT(table_name, '.', column_name) FROM information_schema.columns WHERE table_schema = DATABASE()
+    AND column_name IN ('reminded_at','send_reminder','kind','expires_at')")->fetchAll(PDO::FETCH_COLUMN);
+sort($cols);
+T::eq(['events.send_reminder', 'notifications.expires_at', 'notifications.kind', 'registrations.reminded_at'], $cols, 'kolom pengingat dibuat otomatis (migrasi v3)');
+T::eq('3', $setting('schema_version'), 'versi skema 3');
+
+$remTime = date('H:i', time() - 60);
+$admin->get('/admin/notifikasi');
+T::contains('Pengingat H-1', $admin->body, 'kartu pengingat H-1 tampil');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => '1', 'notify_reminder_enabled' => '1', 'notify_reminder_time' => '25:00'] + $throttle);
+$admin->follow();
+T::contains('Format Jam kirim pengingat tidak valid', $admin->body, 'jam kirim tidak valid ditolak');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => '1', 'notify_reminder_enabled' => '1', 'notify_reminder_time' => $remTime,
+    'notify_email_enabled' => '1', 'notify_reminder_wa_template' => "Pengingat {nama}: besok {event}\nGrup: {link_grup}",
+    'notify_reminder_email_subject' => 'Pengingat: {event} besok'] + $throttle);
+$admin->follow();
+T::contains('Pengaturan notifikasi disimpan', $admin->body, 'pengingat diaktifkan');
+
+// Event mulai 25 jam lagi -> jadwal pengingat (H-1 jam ' . $remTime . ') sudah lewat = jatuh tempo
+$startTs = time() + 25 * 3600;
+$mkEvent = static function (string $title, bool $remind) use ($admin, $startTs): int {
+    $admin->get('/admin/event/baru');
+    $admin->post('/admin/event', ['_token' => $admin->csrf(), 'title' => $title, 'slug' => '', 'status' => 'open', 'theme' => 'ocean',
+        'fields' => '[]', 'show_email' => '1', 'starts_at' => date('Y-m-d\TH:i', $startTs), 'location' => 'Aula'] + ($remind ? ['send_reminder' => '1'] : []));
+    preg_match('#/admin/event/(\d+)/edit#', $admin->location(), $m);
+    return (int) ($m[1] ?? 0);
+};
+$evRem = $mkEvent('Seminar Besok', true);
+$evNoRem = $mkEvent('Seminar Tanpa Pengingat', false);
+T::ok($evRem > 0 && $evNoRem > 0, 'dua event dibuat');
+T::eq('0', (string) $pdo->query("SELECT send_reminder FROM events WHERE id = {$evNoRem}")->fetchColumn(), 'pengingat bisa dimatikan per event');
+$ins = $pdo->prepare('INSERT INTO registrations (event_id, code, name, wa, email, created_at, updated_at) VALUES (?,?,?,?,?,?,?)');
+$old = date('Y-m-d H:i:s', time() - 3 * 86400);
+$ins->execute([$evRem, 'REMAAAA1', 'Andi Lama', '6281277770001', 'andi@peserta.id', $old, $old]);
+$ins->execute([$evRem, 'REMBBBB2', 'Bela Baru', '6281277770002', 'bela@peserta.id', now_e2e(), now_e2e()]);
+$ins->execute([$evNoRem, 'REMCCCC3', 'Caca Nonaktif', '6281277770003', null, $old, $old]);
+$idA = (int) $pdo->query("SELECT id FROM registrations WHERE code='REMAAAA1'")->fetchColumn();
+$idB = (int) $pdo->query("SELECT id FROM registrations WHERE code='REMBBBB2'")->fetchColumn();
+
+$admin->get('/admin/notifikasi');
+T::contains('Jadwal pengingat 7 hari ke depan', $admin->body, 'jadwal pengingat tampil');
+T::contains('Seminar Besok', $admin->body, 'event mendatang tercantum di jadwal');
+$admin->get('/admin/peserta/' . $idB);
+T::contains('mendaftar kurang dari 1 hari', $admin->body, 'detail peserta: pengingat tidak berlaku untuk pendaftar mepet');
+
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('wa_next_allowed_at', '0'), ('wa_batch_count', '0'), ('reminder_last_scan', '0')");
+@unlink($mockLog);
+@unlink($smtpLog);
+$anon->get('/cron/' . $cronToken . '?detik=5');
+T::eq(200, $anon->status, 'cron memproses pengingat');
+$rem = $pdo->query("SELECT registration_id, channel, status, expires_at FROM notifications WHERE kind = 'reminder' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+T::eq([$idA, $idA], array_map('intval', array_column($rem, 'registration_id')), 'hanya peserta yang daftar > 1 hari sebelumnya yang diingatkan');
+T::eq(['whatsapp', 'email'], array_column($rem, 'channel'), 'pengingat lewat WhatsApp & email');
+T::eq(['sent', 'sent'], array_column($rem, 'status'), 'pengingat terkirim');
+T::eq(date('Y-m-d H:i', $startTs), substr((string) ($rem[0]['expires_at'] ?? ''), 0, 16), 'pengingat kedaluwarsa saat acara dimulai');
+T::ok($pdo->query("SELECT reminded_at FROM registrations WHERE id = {$idA}")->fetchColumn() !== null, 'peserta ditandai sudah diingatkan');
+T::eq(null, $pdo->query("SELECT reminded_at FROM registrations WHERE id = {$idB}")->fetchColumn() ?: null, 'pendaftar mepet tidak ditandai');
+$calls = array_values(array_filter($readJsonl($mockLog), static fn($c) => $c['path'] === '/send'));
+T::eq(1, count($calls), 'tepat 1 WA pengingat');
+T::contains('Pengingat Andi Lama: besok Seminar Besok', $calls[0]['post']['message'] ?? '', 'isi pengingat dari template');
+T::notContains('Grup:', $calls[0]['post']['message'] ?? '', 'baris link grup kosong dihapus');
+$mails = $readJsonl($smtpLog);
+T::contains('Subject: Pengingat: Seminar Besok besok', $mails[0]['data'] ?? '', 'email pengingat terkirim');
+$pdo->exec("REPLACE INTO app_settings (`key`, value) VALUES ('reminder_last_scan', '0')");
+$anon->get('/cron/' . $cronToken . '?detik=5');
+T::eq(2, (int) $pdo->query("SELECT COUNT(*) FROM notifications WHERE kind = 'reminder'")->fetchColumn(), 'cron berikutnya tidak mengirim pengingat ganda');
+$admin->get('/admin/peserta/' . $idA);
+T::contains('Diantrekan', $admin->body, 'detail peserta: status pengingat');
+// Kedaluwarsa: pengingat yang belum terkirim ketika acara sudah dimulai dibatalkan
+$pdo->exec("INSERT INTO notifications (registration_id, kind, channel, provider, recipient, message, status, next_attempt_at, expires_at, created_at)
+    VALUES ({$idA}, 'reminder', 'whatsapp', 'fonnte', '6281277770001', 'x', 'pending', NOW(), DATE_SUB(NOW(), INTERVAL 1 MINUTE), NOW())");
+$expId = (int) $pdo->lastInsertId();
+$anon->get('/cron/' . $cronToken . '?detik=5');
+T::eq('cancelled', (string) $pdo->query("SELECT status FROM notifications WHERE id = {$expId}")->fetchColumn(), 'pengingat kedaluwarsa dibatalkan, tidak dikirim');
+$admin->get('/admin/notifikasi');
+T::contains('Pengingat H-1', $admin->body, 'jenis pesan tampil di riwayat');
+$admin->post('/admin/notifikasi', ['_token' => $admin->csrf(), 'notify_enabled' => '', 'notify_reminder_enabled' => ''] + $throttle);
 
 // =====================================================================
 T::group('Status, duplikat & hapus event');

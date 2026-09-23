@@ -99,7 +99,7 @@ final class BroadcastController extends Controller
         DB::transaction(static function () use ($list, $event, $data, $provider) {
             foreach ($list as $reg) {
                 Notification::create([
-                    'registration_id' => (int) $reg['id'], 'channel' => 'whatsapp', 'provider' => $provider,
+                    'registration_id' => (int) $reg['id'], 'kind' => 'broadcast', 'channel' => 'whatsapp', 'provider' => $provider,
                     'recipient' => (string) $reg['wa'],
                     // Variasi kalimat per penerima agar pesan tidak identik (mengurangi deteksi spam)
                     'message' => WaThrottle::spin(Notifier::render($data['message'], Notifier::vars($reg, $event))),

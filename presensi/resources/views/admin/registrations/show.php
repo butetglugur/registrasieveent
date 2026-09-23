@@ -30,6 +30,7 @@ $fmt = static fn($v) => is_array($v) ? implode(', ', $v) : (string) $v;
           <dt><?= e($k) ?></dt><dd><?= e($fmt($val)) ?></dd>
         <?php endforeach; ?>
         <dt>Waktu daftar</dt><dd><?= e(day_id($reg['created_at']) . ', ' . date_id($reg['created_at'])) ?></dd>
+        <dt>Pengingat H-1</dt><dd><?= e(App\Services\Reminder::statusFor($reg, $reg['event_starts_at'] ?? null, (bool) (int) ($reg['event_send_reminder'] ?? 1))) ?></dd>
         <dt>IP pendaftar</dt><dd class="mono muted"><?= e($reg['ip'] ?: '-') ?></dd>
       </dl>
     </div>

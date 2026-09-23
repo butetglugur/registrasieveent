@@ -75,6 +75,41 @@ $secretHint = static fn(bool $has) => $has ? '•••••••• tersimpan
       </div>
 
       <div class="card">
+        <div class="card-header"><h3><?= icon('calendar') ?> Pengingat H-1</h3><label class="switch"><input type="checkbox" name="notify_reminder_enabled" value="1" <?= $on('notify_reminder_enabled') ?>> Aktif</label></div>
+        <div class="card-body">
+          <p class="muted small">Dikirim <b>sehari sebelum acara</b> lewat kanal yang aktif (WhatsApp/email), hanya untuk peserta yang mendaftar <b>lebih dari 1 hari</b> sebelum acara dimulai. Tiap peserta hanya sekali; tetap mengikuti jeda anti-blokir, dan otomatis dibatalkan bila belum terkirim saat acara dimulai.</p>
+          <div data-show-if="notify_reminder_enabled=1">
+            <div class="form-group"><label class="label" for="notify_reminder_time">Jam kirim (H-1)</label>
+              <input id="notify_reminder_time" type="time" class="input <?= error('notify_reminder_time') ? 'is-invalid' : '' ?>" name="notify_reminder_time" value="<?= e($v('notify_reminder_time', App\Services\Reminder::DEFAULT_TIME)) ?>" style="max-width:180px">
+              <div class="hint">Pilih jam kerja (mis. 08:00–10:00) agar pesan dibaca & tidak terasa spam.</div>
+              <?= $this->partial('partials.field-error', ['field' => 'notify_reminder_time']) ?></div>
+            <div class="form-group"><label class="label" for="notify_reminder_wa_template">Template pengingat WhatsApp</label>
+              <textarea id="notify_reminder_wa_template" class="textarea mono" name="notify_reminder_wa_template" rows="8" maxlength="2000"><?= e($v('notify_reminder_wa_template', App\Services\Reminder::DEFAULT_WA_TEMPLATE)) ?></textarea></div>
+            <div class="form-group"><label class="label" for="notify_reminder_email_subject">Subjek email pengingat</label>
+              <input id="notify_reminder_email_subject" class="input" name="notify_reminder_email_subject" value="<?= e($v('notify_reminder_email_subject', App\Services\Reminder::DEFAULT_EMAIL_SUBJECT)) ?>" maxlength="200"></div>
+            <div class="form-group mb-0"><label class="label" for="notify_reminder_email_template">Isi email pengingat</label>
+              <textarea id="notify_reminder_email_template" class="textarea mono" name="notify_reminder_email_template" rows="6" maxlength="4000"><?= e($v('notify_reminder_email_template', App\Services\Reminder::DEFAULT_EMAIL_TEMPLATE)) ?></textarea></div>
+          </div>
+          <?php if ($reminders): ?>
+            <div class="form-section-title mt-2">Jadwal pengingat 7 hari ke depan</div>
+            <div class="list">
+              <?php foreach ($reminders as $rm): ?>
+                <div class="list-item" style="padding:.6rem 0">
+                  <div class="grow">
+                    <div class="t"><?= e($rm['event']['title']) ?></div>
+                    <div class="s">Acara <?= e(date_id($rm['event']['starts_at'])) ?> ·
+                      <?php if (!(int) $rm['event']['send_reminder']): ?>pengingat dimatikan untuk event ini
+                      <?php else: ?>kirim <?= e(date_id(date('Y-m-d H:i:s', $rm['remind_at']))) ?> · <?= number_id($rm['eligible']) ?> menunggu<?= $rm['done'] ? ', ' . number_id($rm['done']) . ' sudah diantrekan' : '' ?><?= $rm['eligible'] ? ' · ' . e(App\Services\WaThrottle::humanDuration($rm['eta'])) : '' ?><?php endif; ?></div>
+                    <?php if ($rm['late'] && (int) $rm['event']['send_reminder']): ?><div class="small text-danger"><?= icon('alert') ?> Estimasi pengiriman melewati jam acara — majukan jam kirim atau naikkan batas per jam dengan hati-hati.</div><?php endif; ?>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><h3><?= icon('hash') ?> Placeholder</h3></div>
         <div class="card-body">
           <div class="flex wrap gap-1">
@@ -211,11 +246,12 @@ $secretHint = static fn(bool $has) => $has ? '•••••••• tersimpan
   <?php else: ?>
   <div class="table-wrap">
     <table class="table table-cards">
-      <thead><tr><th>Waktu</th><th>Kanal</th><th>Peserta</th><th>Tujuan</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Waktu</th><th>Jenis</th><th>Kanal</th><th>Peserta</th><th>Tujuan</th><th>Status</th><th></th></tr></thead>
       <tbody>
       <?php foreach ($logs->items as $n): ?>
         <tr>
           <td data-label="Waktu"><span class="small nowrap"><?= e(date_id($n['created_at'], true, true)) ?></span></td>
+          <td data-label="Jenis"><span class="badge <?= ['reminder' => 'badge-info', 'broadcast' => 'badge-primary'][$n['kind'] ?? ''] ?? '' ?>"><?= e(['registration' => 'Pendaftaran', 'reminder' => 'Pengingat H-1', 'broadcast' => 'Pesan massal'][$n['kind'] ?? 'registration'] ?? $n['kind']) ?></span></td>
           <td data-label="Kanal"><span class="nowrap"><?= icon($chanIcon[$n['channel']] ?? 'zap') ?> <?= e(ucfirst((string) $n['channel'])) ?> <span class="muted small">(<?= e($n['provider']) ?>)</span></span></td>
           <td data-label="Peserta"><?= $n['reg_name'] ? e($n['reg_name']) . ' <span class="mono muted small">' . e($n['reg_code']) . '</span>' : '<span class="muted">—</span>' ?></td>
           <td data-label="Tujuan"><span class="small mono"><?= e($n['channel'] === 'whatsapp' ? mask_wa((string) $n['recipient']) : str_limit((string) $n['recipient'], 40)) ?></span></td>

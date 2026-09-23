@@ -144,6 +144,8 @@ $link = $isEdit ? full_url('e/' . $event['slug']) : '';
             <input id="redirect_seconds" class="input" name="redirect_seconds" value="<?= e((string) $v('redirect_seconds')) ?>" inputmode="numeric" placeholder="0 = tidak otomatis">
             <?= $this->partial('partials.field-error', ['field' => 'redirect_seconds']) ?>
           </div>
+          <label class="switch mb-2"><input type="checkbox" name="send_reminder" value="1" <?= $chk('send_reminder') ?>> Kirim pengingat H-1 otomatis</label>
+          <div class="hint mb-2" style="margin-top:-.6rem">Hanya untuk peserta yang mendaftar lebih dari 1 hari sebelum acara. Aktifkan kanal & jam kirim di menu Notifikasi.</div>
           <div class="form-group mb-0">
             <label class="label" for="success_message">Pesan sukses</label>
             <textarea id="success_message" class="textarea" name="success_message" rows="3" maxlength="1000" placeholder="mis. Sampai jumpa di lokasi! Datang 15 menit sebelum acara."><?= e($v('success_message')) ?></textarea>

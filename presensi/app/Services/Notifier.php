@@ -160,6 +160,7 @@ final class Notifier
      */
     public static function process(array $ids = [], int $dueLimit = 5, int $waBudget = 1): array
     {
+        Notification::expireOverdue();
         $ids = array_values(array_unique(array_merge(array_map('intval', $ids), $dueLimit > 0 ? Notification::dueIds($dueLimit) : [])));
         $result = ['sent' => 0, 'failed' => 0, 'wa_wait_until' => 0];
         foreach ($ids as $id) {
@@ -224,6 +225,7 @@ final class Notifier
         if (!self::enabled()) {
             return;
         }
+        Reminder::dispatchDue();
         $r = self::process($ids, 5, 1);
         if (\App\Core\App::$detached && $r['wa_wait_until'] > 0) {
             $wait = $r['wa_wait_until'] - time();
@@ -244,6 +246,7 @@ final class Notifier
         $deadline = time() + $seconds;
         $total = ['sent' => 0, 'failed' => 0];
         Setting::set('cron_last_run', (string) time());
+        Reminder::dispatchDue(null, true);
         do {
             $r = self::process([], 20, 1);
             $total['sent'] += $r['sent'];

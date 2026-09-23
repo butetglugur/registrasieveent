@@ -13,6 +13,7 @@ use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Setting;
 use App\Services\Notifier;
+use App\Services\Reminder;
 use App\Services\WaThrottle;
 
 /**
@@ -37,6 +38,7 @@ final class NotificationController extends Controller
             'cronLast'  => (int) Setting::fresh('cron_last_run', '0'),
             'cronUrl'   => full_url('cron/' . Notifier::cronToken()),
             'cronCmd'   => 'php ' . base_path('cron.php'),
+            'reminders' => Reminder::upcoming(),
         ]);
     }
 
@@ -49,14 +51,18 @@ final class NotificationController extends Controller
             'notify_mail_from', 'notify_mail_from_name', 'notify_email_subject', 'notify_email_template', 'notify_webhook_url',
             'notify_wa_delay_min', 'notify_wa_delay_max', 'notify_wa_batch_size', 'notify_wa_batch_rest',
             'notify_wa_hourly_limit', 'notify_wa_daily_limit', 'notify_quiet_start', 'notify_quiet_end',
+            'notify_reminder_time', 'notify_reminder_email_subject',
         ]);
+        if ($data['notify_reminder_time'] === '') {
+            $data['notify_reminder_time'] = Reminder::DEFAULT_TIME;
+        }
         foreach (WaThrottle::DEFAULTS as $k => $def) {
             if (array_key_exists($k, $data) && $data[$k] === '') {
                 $data[$k] = $def;
             }
         }
         // Template boleh multi-baris: ambil mentah (hanya buang karakter kontrol).
-        foreach (['notify_wa_template', 'notify_email_template'] as $k) {
+        foreach (['notify_wa_template', 'notify_email_template', 'notify_reminder_wa_template', 'notify_reminder_email_template'] as $k) {
             $raw = $request->input($k, '');
             $data[$k] = is_string($raw) ? trim(preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', str_replace("\r\n", "\n", $raw)) ?? '') : '';
         }
@@ -65,6 +71,7 @@ final class NotificationController extends Controller
             'notify_email_enabled'   => $request->bool('notify_email_enabled'),
             'notify_webhook_enabled' => $request->bool('notify_webhook_enabled'),
             'notify_quiet_enabled'   => $request->bool('notify_quiet_enabled'),
+            'notify_reminder_enabled' => $request->bool('notify_reminder_enabled'),
         ];
         $rules = [
             'notify_wa_provider'     => 'required|in:' . implode(',', array_keys(Notifier::WA_PROVIDERS)),
@@ -90,6 +97,11 @@ final class NotificationController extends Controller
             // Format array: pola regex mengandung "|" sehingga tidak boleh digabung dengan pemisah aturan
             'notify_quiet_start'     => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
             'notify_quiet_end'       => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            // Pengingat H-1
+            'notify_reminder_time'           => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            'notify_reminder_wa_template'    => 'nullable|max:2000',
+            'notify_reminder_email_subject'  => 'nullable|max:200',
+            'notify_reminder_email_template' => 'nullable|max:4000',
         ];
         $labels = [
             'notify_wablas_domain' => 'Domain server Wablas', 'notify_wa_template' => 'Template WhatsApp',
@@ -98,6 +110,8 @@ final class NotificationController extends Controller
             'notify_wa_delay_min' => 'Jeda minimum', 'notify_wa_delay_max' => 'Jeda maksimum', 'notify_wa_batch_size' => 'Jumlah pesan per sesi',
             'notify_wa_batch_rest' => 'Lama istirahat', 'notify_wa_hourly_limit' => 'Batas per jam', 'notify_wa_daily_limit' => 'Batas per hari',
             'notify_quiet_start' => 'Jam tenang mulai', 'notify_quiet_end' => 'Jam tenang selesai',
+            'notify_reminder_time' => 'Jam kirim pengingat', 'notify_reminder_wa_template' => 'Template pengingat WhatsApp',
+            'notify_reminder_email_template' => 'Template pengingat email',
         ];
         $v = \App\Core\Validator::make($data, $rules, $labels);
         $v->fails();
@@ -144,6 +158,15 @@ final class NotificationController extends Controller
         }
         if ($save['notify_email_template'] === '') {
             $save['notify_email_template'] = Notifier::DEFAULT_EMAIL_TEMPLATE;
+        }
+        foreach ([
+            'notify_reminder_wa_template' => Reminder::DEFAULT_WA_TEMPLATE,
+            'notify_reminder_email_subject' => Reminder::DEFAULT_EMAIL_SUBJECT,
+            'notify_reminder_email_template' => Reminder::DEFAULT_EMAIL_TEMPLATE,
+        ] as $k => $def) {
+            if ($save[$k] === '') {
+                $save[$k] = $def;
+            }
         }
         if ($save['notify_email_subject'] === '') {
             $save['notify_email_subject'] = Notifier::DEFAULT_EMAIL_SUBJECT;

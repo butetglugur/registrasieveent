@@ -60,6 +60,16 @@ final class Notification
     }
 
     /** Tunda semua WA yang antre hingga waktu tertentu (dipakai gerbang anti-blokir). */
+    /** Batalkan pesan yang lewat masa berlakunya (mis. pengingat setelah acara dimulai). */
+    public static function expireOverdue(): int
+    {
+        return DB::run(
+            "UPDATE notifications SET status = 'cancelled', last_error = 'Kedaluwarsa: acara sudah dimulai'
+             WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?",
+            [now()]
+        )->rowCount();
+    }
+
     public static function postponeWhatsApp(int $untilTs): void
     {
         $until = date('Y-m-d H:i:s', $untilTs);

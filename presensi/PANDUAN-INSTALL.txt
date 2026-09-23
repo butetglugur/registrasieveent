@@ -131,6 +131,19 @@ AGAR ANTREAN BERJALAN — PASANG CRON (disarankan, tanpa SSH):
 Tanpa cron, antrean hanya berjalan saat ada pengunjung/pendaftar atau saat
 halaman Admin > Notifikasi dibiarkan terbuka.
 
+PENGINGAT H-1 (v2.3) — ⚠️ memakai kanal notifikasi yang sama (pihak ketiga)
+--------------------------------------------------------------------------
+Aktifkan di Admin > Notifikasi > "Pengingat H-1" dan atur jam kirim (default 09:00).
+  - Dikirim sehari sebelum acara pada jam tersebut, lewat WhatsApp/email yang aktif.
+  - Hanya untuk peserta yang mendaftar LEBIH DARI 1 HARI (24 jam) sebelum acara
+    dimulai dan sudah terdaftar sebelum jam pengingat. Pendaftar mepet sudah
+    menerima pesan konfirmasi, jadi tidak diingatkan lagi.
+  - Sekali per peserta; ikut jeda anti-blokir; otomatis dibatalkan bila belum
+    terkirim saat acara dimulai. Bisa dimatikan per event (form event).
+  - Jadwal & estimasi 7 hari ke depan tampil di halaman Notifikasi, dengan
+    peringatan bila estimasi pengiriman melewati jam acara.
+  - WAJIB cron aktif agar pengingat terkirim tepat waktu.
+
 Di luar fitur notifikasi, aplikasi tidak memanggil layanan eksternal.
 Font & library QR sudah disertakan lokal (tanpa CDN).
 

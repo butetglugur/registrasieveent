@@ -4,7 +4,7 @@ use App\Core\Config;
 
 return [
     'name'     => 'Presensi Event',
-    'version'  => '2.2.0',
+    'version'  => '2.3.0',
     'url'      => (string) Config::env('APP_URL', ''),
     'key'      => (string) Config::env('APP_KEY', ''),
     'debug'    => (bool) Config::env('APP_DEBUG', false),

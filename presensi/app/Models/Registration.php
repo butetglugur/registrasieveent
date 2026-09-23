@@ -12,7 +12,8 @@ final class Registration
     public static function find(int $id): ?array
     {
         return DB::first(
-            'SELECT r.*, e.title AS event_title, e.slug AS event_slug, e.fields AS event_fields, e.representative_label
+            'SELECT r.*, e.title AS event_title, e.slug AS event_slug, e.fields AS event_fields, e.representative_label,
+                    e.starts_at AS event_starts_at, e.send_reminder AS event_send_reminder
              FROM registrations r JOIN events e ON e.id = r.event_id WHERE r.id = ?',
             [$id]
         );
